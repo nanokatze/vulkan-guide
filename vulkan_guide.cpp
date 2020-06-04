@@ -412,7 +412,7 @@ namespace vkutil {
 		//load the fragment and vertex shaders for the triangle
 		//if any of the 2 give error we abort
 		if (!load_shader_module("C:/Programming/vulkan-guide/shaders/triangle.vert.spv",device,&vert_module) ||
-			!load_shader_module("C:/Programming/vulkan-guide/shaders/triangle.frag.spv", device, &frag_module)) {
+			!load_shader_module("C:/Programming/vulkan-guide/shaders/funky_triangle.frag.spv", device, &frag_module)) {
 			std::cout << "failed to create shader module\n";
 			return false;
 		}
