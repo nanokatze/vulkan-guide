@@ -402,7 +402,7 @@ namespace vkutil {
 	};
 
 
-	bool create_triangle_pipeline(VkDevice device, VkExtent2D swapchainExtent, VkRenderPass renderPass, VkPipelineLayout* outPipelineLayout, VkPipeline* outPipeline) {
+	bool create_triangle_pipeline(VkDevice device, VkExtent2D swapchainExtent, VkRenderPass renderPass,VkPipelineLayout layout,const std::string& vertex_shader, const std::string& frag_shader , VkPipeline* outPipeline) {
 		
 		PipelineBuilder pipelineBuilder;
 
@@ -411,8 +411,8 @@ namespace vkutil {
 
 		//load the fragment and vertex shaders for the triangle
 		//if any of the 2 give error we abort
-		if (!load_shader_module("C:/Programming/vulkan-guide/shaders/triangle.vert.spv",device,&vert_module) ||
-			!load_shader_module("C:/Programming/vulkan-guide/shaders/funky_triangle.frag.spv", device, &frag_module)) {
+		if (!load_shader_module(vertex_shader,device,&vert_module) ||
+			!load_shader_module(frag_shader, device, &frag_module)) {
 			std::cout << "failed to create shader module\n";
 			return false;
 		}
@@ -457,19 +457,13 @@ namespace vkutil {
 		pipelineBuilder._multisampling = vkinit::multisampling_state_create_info();
 
 		//a single blend attachment with no blending and writing to RGBA
-		pipelineBuilder._colorBlendAttachment = vkinit::color_blend_attachment_state();
+		pipelineBuilder._colorBlendAttachment = vkinit::color_blend_attachment_state();		
 
-		//build the pipeline layout that controls the inputs/outputs of the shader
-		//we are not using descriptor sets or other systems yet, so no need to use anything other than empty default
-		VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();	
-
-		VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, outPipelineLayout));
-
-		//store the layout object for proper deletion and use later
-		pipelineBuilder._pipelineLayout = *outPipelineLayout;
+		pipelineBuilder._pipelineLayout = layout;
 
 		//finally build the pipeline
 		VkPipeline newPipeline = pipelineBuilder.build_pipeline(device, renderPass);
+
 
 		//clean up the loaded shader modules, once the pipeline is built we no longer need it
 		vkDestroyShaderModule(device, frag_module, nullptr);
@@ -510,10 +504,16 @@ public:
 	std::vector<VkImageView> _swapchainImageViews;
 	
 	VkPipeline _trianglePipeline;
+	VkPipeline _funkTrianglePipeline;
+
 	VkPipelineLayout _trianglePipelineLayout;
+
+	
 
 	uint64_t _frameNumber;
 	bool _isInitialized = false;
+
+	bool _drawFunky = false;
 
 	void init();
 	void cleanup();
@@ -658,7 +658,22 @@ void VulkanEngine::init()
 	VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_renderSemaphore));
 	
 
-	vkutil::create_triangle_pipeline(_device, _windowExtent, _renderPass, &_trianglePipelineLayout, &_trianglePipeline);
+	//build the pipeline layout that controls the inputs/outputs of the shader
+	//we are not using descriptor sets or other systems yet, so no need to use anything other than empty default
+	VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();
+
+	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_trianglePipelineLayout));
+
+	
+	vkutil::create_triangle_pipeline(_device, _windowExtent, _renderPass, _trianglePipelineLayout,
+		"C:/Programming/vulkan-guide/shaders/triangle.vert.spv",
+		"C:/Programming/vulkan-guide/shaders/triangle.frag.spv",
+		&_trianglePipeline);
+
+	vkutil::create_triangle_pipeline(_device, _windowExtent, _renderPass, _trianglePipelineLayout,
+		"C:/Programming/vulkan-guide/shaders/triangle.vert.spv",
+		"C:/Programming/vulkan-guide/shaders/funky_triangle.frag.spv",
+		&_funkTrianglePipeline);
 
 	//everything went fine
 	_isInitialized = true;
@@ -701,7 +716,14 @@ void VulkanEngine::draw() {
 
 	//once we start adding rendering commands, they will go here
 
-	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _trianglePipeline);
+	if (_drawFunky)
+	{
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _funkTrianglePipeline);
+	}
+	else {
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _trianglePipeline);
+	}
+	
 	vkCmdDraw(cmd, 3, 1, 0, 0);
 
 	//finalize the render pass
@@ -800,6 +822,13 @@ int main(int argc, char* argv[])
 		{
 			//close the window when user alt-f4s or clicks the X button
 			if (e.type == SDL_QUIT) bQuit = true;
+			else if (e.type == SDL_KEYDOWN)
+			{
+				if (e.key.keysym.sym == SDLK_SPACE)
+				{
+					engine._drawFunky = !engine._drawFunky;
+				}
+			}
 		}
 
 		engine.draw();	
