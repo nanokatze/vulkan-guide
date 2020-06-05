@@ -18,7 +18,7 @@ add_subdirectory(third_party)
 # Add source to this project's executable.
 add_executable (vulkan_guide "vulkan_guide.cpp" "vulkan_guide.h")
 
-target_link_libraries(vulkan_guide volk vkbootstrap)
+target_link_libraries(vulkan_guide volk vkbootstrap vma glm)
 
 target_link_libraries(vulkan_guide Vulkan::Vulkan sdl2 )
 
