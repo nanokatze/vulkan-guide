@@ -838,8 +838,7 @@ int main(int argc, char* argv[])
 
 		//make sure to release the resources of the engine properly if it was initialized well		
 		engine.cleanup();
-	}
-	
+	}	
 
 	return 0;
 }
