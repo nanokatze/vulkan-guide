@@ -806,13 +806,13 @@ void VulkanEngine::init()
 
 	
 	vkutil::create_triangle_pipeline(_device, _windowExtent, _renderPass, _trianglePipelineLayout,
-		"C:/Programming/vulkan-guide/shaders/triangle.vert.spv",
-		"C:/Programming/vulkan-guide/shaders/triangle.frag.spv",
+		"../../shaders/triangle.vert.spv",
+		"../../shaders/triangle.frag.spv",
 		&_trianglePipeline);
 
 	vkutil::create_triangle_pipeline(_device, _windowExtent, _renderPass, _trianglePipelineLayout,
-		"C:/Programming/vulkan-guide/shaders/triangle.vert.spv",
-		"C:/Programming/vulkan-guide/shaders/funky_triangle.frag.spv",
+		"../../shaders/triangle.vert.spv",
+		"../../shaders/funky_triangle.frag.spv",
 		&_funkTrianglePipeline);
 
 	//everything went fine
