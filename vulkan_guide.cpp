@@ -249,6 +249,24 @@ namespace vkinit {
 	
 		return info;
 	}
+	VkImageCreateInfo image_create_info(VkFormat format , VkImageUsageFlags usageFlags ,VkExtent3D extent) {
+		VkImageCreateInfo info = { };
+		info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+		info.pNext = nullptr;
+
+		info.imageType = VK_IMAGE_TYPE_2D;		
+		
+		info.format = format;
+		info.extent = extent;
+
+		info.mipLevels = 1;
+		info.arrayLayers = 1;
+		info.samples = VK_SAMPLE_COUNT_1_BIT;
+		info.tiling = VK_IMAGE_TILING_OPTIMAL;
+		info.usage = usageFlags;
+
+		return info;
+	}
 
 	
 }
@@ -298,6 +316,11 @@ struct Vertex {
 struct Mesh {
 	std::vector<Vertex> vertices;
 	std::vector<uint32_t> indices;
+};
+
+struct AllocatedImage {
+	VkImage image;	
+	VmaAllocation allocation;
 };
 
 namespace vkutil {
@@ -738,7 +761,9 @@ public:
 	std::vector<VkFramebuffer> _framebuffers;
 	std::vector<VkImage> _swapchainImages;
 	std::vector<VkImageView> _swapchainImageViews;
-	
+	AllocatedImage _depthImage;
+	VkImageView _depthImageView;
+
 	VkPipeline _trianglePipeline;
 	VkPipeline _funkTrianglePipeline;
 	VkPipeline _meshPipeline;
@@ -851,8 +876,7 @@ void VulkanEngine::init()
 
 	VmaAllocatorCreateInfo allocatorInfo = {};
 	allocatorInfo.physicalDevice = phys_ret.value().physical_device;
-	allocatorInfo.device = _device;
-	//allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+	allocatorInfo.device = _device;	
 	allocatorInfo.instance = _instance;
 	vmaCreateAllocator(&allocatorInfo, &allocator);
 
@@ -862,6 +886,7 @@ void VulkanEngine::init()
 	_swapchainImages = vkbSwapchain.get_images().value();
 	_swapchainImageViews= vkbSwapchain.get_image_views().value();
 
+	//find a depth-buffer format to use
 	VkFormat formats[] = {
 		VK_FORMAT_D32_SFLOAT_S8_UINT,
 		VK_FORMAT_D32_SFLOAT,
@@ -870,67 +895,52 @@ void VulkanEngine::init()
 		VK_FORMAT_D16_UNORM
 	};
 
-	VkFormat depth_fmt = VK_FORMAT_UNDEFINED;
+	VkFormat selectedDepthFormat = VK_FORMAT_UNDEFINED;
 	for (int i = 0; i < sizeof(formats) / sizeof(VkFormat); i++) {
 		VkFormatProperties cfg;
 		vkGetPhysicalDeviceFormatProperties(physDevice, formats[i], &cfg);
 		if (cfg.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
-			depth_fmt = formats[i];
+			selectedDepthFormat = formats[i];
 			break;
 		}
 	}
 
-	if (depth_fmt == VK_FORMAT_UNDEFINED) {
-		fprintf(stderr, "Could not find a suitable depth format\n");
-		assert(false);
-	}
-
-	VkImageCreateInfo dimg_info = { };
-	dimg_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-	dimg_info.imageType = VK_IMAGE_TYPE_2D;
-	dimg_info.format = depth_fmt;
-	dimg_info.extent = {
+	VkExtent3D depthImageExtent = {
 		_windowExtent.width,
 		_windowExtent.height,
 		1
 	};
-	dimg_info.mipLevels = 1;
-	dimg_info.arrayLayers = 1;
-	dimg_info.samples = VK_SAMPLE_COUNT_1_BIT;
-	dimg_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-	dimg_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
-	VkImage depth_img;
+	//the depth image will be a image with the format we selected and Depth Attachment usage flag
+	VkImageCreateInfo dimg_info = vkinit::image_create_info(selectedDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depthImageExtent);	
 
-	VmaAllocationCreateInfo dimg_allocinfo = {};
-	
+	//for the depth image, we want to allocate it from gpu local memory
+	VmaAllocationCreateInfo dimg_allocinfo = {};	
 	dimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
 	dimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	VmaAllocation depth_alloc;
-	vmaCreateImage(allocator, &dimg_info, &dimg_allocinfo, &depth_img, &depth_alloc, nullptr);
+	
+	//allocate and create the image
+	vmaCreateImage(allocator, &dimg_info, &dimg_allocinfo, &_depthImage.image, &_depthImage.allocation, nullptr);
+	
 
-	VkImageAspectFlags aspect = 
-		(depth_fmt >= VK_FORMAT_D16_UNORM_S8_UINT) ?
-		VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT :
-		VK_IMAGE_ASPECT_DEPTH_BIT;
-
+	//build a image-view for the depth image to use for rendering
 	VkImageViewCreateInfo dview_info = {};
 	dview_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 	dview_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	dview_info.image = depth_img;
-	dview_info.format = depth_fmt;
+	dview_info.image = _depthImage.image;
+	dview_info.format = selectedDepthFormat;
 	dview_info.subresourceRange.baseMipLevel = 0;
 	dview_info.subresourceRange.levelCount = 1;
 	dview_info.subresourceRange.baseArrayLayer = 0;
 	dview_info.subresourceRange.layerCount = 1;
-	dview_info.subresourceRange.aspectMask = aspect;
+	dview_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
 
-	VkImageView depth_view;
-	VK_CHECK(vkCreateImageView(_device, &dview_info, nullptr, &depth_view));
+	
+	VK_CHECK(vkCreateImageView(_device, &dview_info, nullptr, &_depthImageView));
 
 
 	//build the default render-pass we need to do rendering
-	_renderPass = vkutil::create_render_pass(_device, vkbSwapchain.image_format,depth_fmt);
+	_renderPass = vkutil::create_render_pass(_device, vkbSwapchain.image_format,selectedDepthFormat);
 
 
 	//create the framebuffers for the swapchain images. This will connect the render-pass to the images for rendering
@@ -943,7 +953,7 @@ void VulkanEngine::init()
 		
 		std::array<VkImageView, 2> attachments;
 		attachments[0] = _swapchainImageViews[i];
-		attachments[1] = depth_view;
+		attachments[1] = _depthImageView;
 		fb_info.pAttachments = attachments.data();
 		fb_info.attachmentCount = 2;
 		VK_CHECK( vkCreateFramebuffer(_device, &fb_info, nullptr, &_framebuffers[i]));		
@@ -1104,21 +1114,26 @@ void VulkanEngine::draw() {
 	else {
 
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipeline);
-		VkDeviceSize offset = 0;
-		
+
+		//bind the mesh vertex buffer with offset 0
+		VkDeviceSize offset = 0;		
 		vkCmdBindVertexBuffers(cmd, 0, 1,&_monkey,&offset);
 		
-
-		glm::mat4 view = glm::translate(glm::mat4(1.f), camPos);
-		//glm::mat4 view = glm::lookAt(camPos,glm::vec3(0,0,0), glm::vec3(0,1,0));
-
+		//make a model view matrix for rendering the object
+		//camera view
+		glm::mat4 view = glm::translate(glm::mat4(1.f), camPos);		
+		//camera projection
 		glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
 		projection[1][1] *= -1;
+		//model rotation
+		glm::mat4 model = glm::rotate(glm::mat4{ 0.1f }, glm::radians(_frameNumber * 0.4f), glm::vec3(0, 1, 0));
 
-		glm::mat4 mesh_matrix = projection* view * glm::mat4{0.1f};
+		glm::mat4 mesh_matrix = projection* view * model;
 
+		//upload the mesh to the gpu via pushconstants
 		vkCmdPushConstants(cmd, _meshPipelineLayout, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, sizeof(glm::mat4), &mesh_matrix);
 
+		//we can now draw
 		vkCmdDraw(cmd, monkey.indices.size(), 1, 0, 0);
 	}
 
