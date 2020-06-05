@@ -15,10 +15,12 @@ find_package(Vulkan REQUIRED)
 
 add_subdirectory(third_party)
 
+set (CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin")
+
 # Add source to this project's executable.
 add_executable (vulkan_guide "vulkan_guide.cpp" "vulkan_guide.h")
 
-target_link_libraries(vulkan_guide volk vkbootstrap vma glm)
+target_link_libraries(vulkan_guide volk vkbootstrap vma glm tinyobjloader)
 
 target_link_libraries(vulkan_guide Vulkan::Vulkan sdl2 )
 
