@@ -5,6 +5,7 @@
 
 #include "vulkan_guide.h"
 #include <vector>
+#include <array>
 #include <fstream>
 
 #include <SDL.h>
@@ -659,8 +660,21 @@ void VulkanEngine::init()
 	
 
 	//build the pipeline layout that controls the inputs/outputs of the shader
-	//we are not using descriptor sets or other systems yet, so no need to use anything other than empty default
+	
 	VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();
+
+
+	//setup push constants
+	VkPushConstantRange push_constant;
+	//offset 0
+	push_constant.offset = 0;
+	//size of 4 floats
+	push_constant.size = sizeof(float) * 4;
+	//for the fragment shader
+	push_constant.stageFlags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+	pipeline_layout_info.pPushConstantRanges = &push_constant;
+	pipeline_layout_info.pushConstantRangeCount = 1;
 
 	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_trianglePipelineLayout));
 
@@ -723,7 +737,12 @@ void VulkanEngine::draw() {
 	else {
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _trianglePipeline);
 	}
+
+	std::array<float, 4> pushConstantData{0,0,0,0};
+	pushConstantData[0] = _frameNumber / 120.f;
 	
+	vkCmdPushConstants(cmd, _trianglePipelineLayout, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, sizeof(float) * 4, pushConstantData.data());
+
 	vkCmdDraw(cmd, 3, 1, 0, 0);
 
 	//finalize the render pass

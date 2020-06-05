@@ -10,14 +10,19 @@
 // antialiasing level (squared)
 #define AA 3
 
+layout( push_constant ) uniform constants
+{
+vec4 data;
+} PushConstants;
+
 layout (location = 0) in vec3 inColor;
 
 layout (location = 0) out vec4 outFragColor;
 
-void mainImage( out vec4 fragColor, in vec2 fragCoord )
+void mainImage( out vec4 fragColor, in vec2 fragCoord , in float iTime)
 {
 	vec2 iResolution = vec2(1700.f,900.f);
-	float iTime = 0;
+	
     vec3 col = vec3(0.0);
     
     for( int m=0; m<AA; m++ )
@@ -77,6 +82,6 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 
 void main() 
 {
-	mainImage(outFragColor, gl_FragCoord.xy);
+	mainImage(outFragColor, gl_FragCoord.xy, PushConstants.data.x);
 }
 
