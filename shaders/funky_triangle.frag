@@ -12,7 +12,7 @@
 
 layout( push_constant ) uniform constants
 {
-vec4 data;
+layout(offset = 0) vec4 data;
 } PushConstants;
 
 layout (location = 0) in vec3 inColor;

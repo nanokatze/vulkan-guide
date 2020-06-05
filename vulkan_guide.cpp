@@ -12,7 +12,7 @@
 #include <SDL_vulkan.h>
 
 #include <glm/glm.hpp>
-
+#include <glm/gtc/matrix_transform.hpp>
 #include <tiny_obj_loader.h>
 
 #define VMA_IMPLEMENTATION
@@ -195,7 +195,7 @@ namespace vkinit {
 		info.lineWidth = 1.0f;
 		//backface cull enable, culling counter-clockwise faces
 		info.cullMode = VK_CULL_MODE_BACK_BIT;
-		info.frontFace = VK_FRONT_FACE_CLOCKWISE;
+		info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 		//no depth bias
 		info.depthBiasEnable = VK_FALSE;
 		info.depthBiasConstantFactor = 0.0f;
@@ -234,16 +234,132 @@ namespace vkinit {
 		return info;
 	}
 
+	VkPipelineDepthStencilStateCreateInfo depth_stencil_create_info(bool bDepthTest, bool bDepthWrite, VkCompareOp compareOp) {
+		VkPipelineDepthStencilStateCreateInfo info = {};
+		info.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+		info.pNext = nullptr;
 
+		info.depthTestEnable = bDepthTest ? VK_TRUE : VK_FALSE;
+		info.depthWriteEnable = bDepthWrite ? VK_TRUE : VK_FALSE;
+		info.depthCompareOp = bDepthTest ? compareOp : VK_COMPARE_OP_ALWAYS;
+		info.depthBoundsTestEnable = VK_FALSE;
+		info.minDepthBounds = 0.0f; // Optional
+		info.maxDepthBounds = 1.0f; // Optional
+		info.stencilTestEnable = VK_FALSE;
+	
+		return info;
+	}
 
 	
 }
 
 
+struct VertexInputDescription {
+	std::vector<VkVertexInputBindingDescription> bindings;
+	std::vector<VkVertexInputAttributeDescription> attributes;
+
+	VkPipelineVertexInputStateCreateFlags flags = 0;
+};
+
+struct Vertex {
+
+	glm::vec3 position;
+	glm::vec3 normal;
+
+	static VertexInputDescription getVertexInputState() {
+		VertexInputDescription description;
+
+		VkVertexInputBindingDescription mainBinding = {};
+		mainBinding.binding = 0;
+		mainBinding.stride = sizeof(Vertex);
+		mainBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		description.bindings.push_back(mainBinding);
+
+		VkVertexInputAttributeDescription positionAttribute = {};
+		positionAttribute.binding = 0;
+		positionAttribute.location = 0;
+		positionAttribute.format = VK_FORMAT_R32G32B32_SFLOAT;
+		positionAttribute.offset = offsetof(Vertex, position);
+
+		VkVertexInputAttributeDescription normalAttribute = {};
+		normalAttribute.binding = 0;
+		normalAttribute.location = 1;
+		normalAttribute.format = VK_FORMAT_R32G32B32_SFLOAT;
+		normalAttribute.offset = offsetof(Vertex, normal);
+
+		description.attributes.push_back(positionAttribute);
+		description.attributes.push_back(normalAttribute);
+
+		return description;
+	}
+};
+
+struct Mesh {
+	std::vector<Vertex> vertices;
+	std::vector<uint32_t> indices;
+};
 
 namespace vkutil {
 
-	VkRenderPass create_render_pass(VkDevice device, VkFormat image_format) {
+	Mesh load_mesh_from_obj(const std::string& filename) {
+		std::vector<tinyobj::material_t> materials;
+			
+		tinyobj::attrib_t attrib;
+		std::vector<tinyobj::shape_t> shapes;
+
+		std::string warn;
+		std::string err;
+		bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filename.c_str(),
+			nullptr);
+		if (!warn.empty()) {
+			std::cout << "WARN: " << warn << std::endl;
+		}
+		if (!err.empty()) {
+			std::cerr << err << std::endl;
+		}
+
+		Mesh newMesh;
+		// Loop over shapes
+		for (size_t s = 0; s < shapes.size(); s++) {
+			// Loop over faces(polygon)
+			size_t index_offset = 0;
+			for (size_t f = 0; f < shapes[s].mesh.num_face_vertices.size(); f++) {
+				int fv = 3;
+
+				// Loop over vertices in the face.
+				for (size_t v = 0; v < fv; v++) {
+					// access to vertex
+					tinyobj::index_t idx = shapes[s].mesh.indices[index_offset + v];
+					tinyobj::real_t vx = attrib.vertices[3 * idx.vertex_index + 0];
+					tinyobj::real_t vy = attrib.vertices[3 * idx.vertex_index + 1];
+					tinyobj::real_t vz = attrib.vertices[3 * idx.vertex_index + 2];
+					tinyobj::real_t nx = attrib.normals[3 * idx.normal_index + 0];
+					tinyobj::real_t ny = attrib.normals[3 * idx.normal_index + 1];
+					tinyobj::real_t nz = attrib.normals[3 * idx.normal_index + 2];
+					tinyobj::real_t tx = attrib.texcoords[2 * idx.texcoord_index + 0];
+					tinyobj::real_t ty = attrib.texcoords[2 * idx.texcoord_index + 1];
+					
+					Vertex new_vert;
+					new_vert.position.x = vx;
+					new_vert.position.y = vy;
+					new_vert.position.z = vz;
+
+					new_vert.normal.x = nx;
+					new_vert.normal.y = ny;
+					new_vert.normal.z = nz;
+
+					newMesh.indices.push_back(newMesh.vertices.size());
+					newMesh.vertices.push_back(new_vert);					
+				}
+				index_offset += fv;				
+			}
+		}
+
+		return newMesh;
+	}
+
+	VkRenderPass create_render_pass(VkDevice device, VkFormat image_format, VkFormat depth_format) {
 
 		//we define an attachment description for our main color image
 		//the attachment is loaded as "clear" when renderpass start
@@ -261,15 +377,35 @@ namespace vkutil {
 		color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 		color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+		VkAttachmentDescription depth_attachment = {};
+		 // Depth attachment
+		depth_attachment.flags = 0;
+		depth_attachment.format = depth_format;
+		depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+		depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+		
+		VkAttachmentDescription attachments[2] = { color_attachment,depth_attachment };
+
 		VkAttachmentReference color_attachment_ref = {};
 		color_attachment_ref.attachment = 0;
 		color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+		VkAttachmentReference depth_attachment_ref = {};
+		depth_attachment_ref.attachment = 1;
+		depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
 
 		//we are going to create 1 subpass, which is the minimum you can do
 		VkSubpassDescription subpass = {};
 		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
 		subpass.colorAttachmentCount = 1;
 		subpass.pColorAttachments = &color_attachment_ref;
+		subpass.pDepthStencilAttachment = &depth_attachment_ref;
 
 		//1 dependency, which is from "outside" into the subpass. And we can read or write color
 		VkSubpassDependency dependency = {};
@@ -283,8 +419,8 @@ namespace vkutil {
 
 		VkRenderPassCreateInfo render_pass_info = {};
 		render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-		render_pass_info.attachmentCount = 1;
-		render_pass_info.pAttachments = &color_attachment;
+		render_pass_info.attachmentCount = 2;
+		render_pass_info.pAttachments = attachments;//&color_attachment;
 		render_pass_info.subpassCount = 1;
 		render_pass_info.pSubpasses = &subpass;
 		render_pass_info.dependencyCount = 1;
@@ -351,6 +487,7 @@ namespace vkutil {
 		VkPipelineColorBlendAttachmentState _colorBlendAttachment;
 		VkPipelineMultisampleStateCreateInfo _multisampling;
 		VkPipelineLayout _pipelineLayout;
+		VkPipelineDepthStencilStateCreateInfo _depthStencil;
 
 		VkPipeline build_pipeline(VkDevice device, VkRenderPass pass) {
 			
@@ -394,6 +531,7 @@ namespace vkutil {
 			pipelineInfo.pRasterizationState = &_rasterizer;
 			pipelineInfo.pMultisampleState = &_multisampling;
 			pipelineInfo.pColorBlendState = &colorBlending;
+			pipelineInfo.pDepthStencilState = &_depthStencil;
 			pipelineInfo.layout = _pipelineLayout;
 			pipelineInfo.renderPass = pass;
 			pipelineInfo.subpass = 0;
@@ -437,7 +575,13 @@ namespace vkutil {
 		//vertex input controls how to read vertices from vertex buffers.
 		pipelineBuilder._vertexInputInfo = vkinit::vertex_input_state_create_info();
 
+		VertexInputDescription vertexDescription = Vertex::getVertexInputState();
 
+		pipelineBuilder._vertexInputInfo.pVertexAttributeDescriptions = vertexDescription.attributes.data();
+		pipelineBuilder._vertexInputInfo.vertexAttributeDescriptionCount = vertexDescription.attributes.size();
+
+		pipelineBuilder._vertexInputInfo.pVertexBindingDescriptions = vertexDescription.bindings.data();
+		pipelineBuilder._vertexInputInfo.vertexBindingDescriptionCount = vertexDescription.bindings.size();
 
 		//input assembly is the configuration for drawing triangle lists, strips, or individual points.
 		//we are just going to draw triangle list
@@ -468,6 +612,8 @@ namespace vkutil {
 
 		//a single blend attachment with no blending and writing to RGBA
 		pipelineBuilder._colorBlendAttachment = vkinit::color_blend_attachment_state();
+
+		pipelineBuilder._depthStencil = vkinit::depth_stencil_create_info(true, true, VK_COMPARE_OP_LESS_OR_EQUAL);
 
 		pipelineBuilder._pipelineLayout = layout;
 
@@ -546,6 +692,8 @@ namespace vkutil {
 		//a single blend attachment with no blending and writing to RGBA
 		pipelineBuilder._colorBlendAttachment = vkinit::color_blend_attachment_state();		
 
+		pipelineBuilder._depthStencil = vkinit::depth_stencil_create_info(false, false, VK_COMPARE_OP_ALWAYS);
+
 		pipelineBuilder._pipelineLayout = layout;
 
 		//finally build the pipeline
@@ -566,45 +714,6 @@ namespace vkutil {
 		}
 	}
 }
-
-struct VertexInputDescription {
-	std::vector<VkVertexInputBindingDescription> bindings;
-	std::vector<VkVertexInputAttributeDescription> attributes;
-
-	VkPipelineVertexInputStateCreateFlags flags=0;
-};
-
-struct Vertex {
-
-	std::array<float, 3> position;
-	std::array<float, 3> color;
-
-	static VertexInputDescription getVertexInputState() {
-		VertexInputDescription description;
-
-		VkVertexInputBindingDescription mainBinding = {};
-		mainBinding.binding = 0;
-		mainBinding.stride = sizeof(Vertex);
-		mainBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-		description.bindings.push_back(mainBinding);
-
-		VkVertexInputAttributeDescription positionAttribute = {};
-		positionAttribute.binding = 0;
-		positionAttribute.location = 0;
-		positionAttribute.format = VK_FORMAT_R32G32B32_SFLOAT;
-		positionAttribute.offset = offsetof(Vertex, position);
-
-		VkVertexInputAttributeDescription colorAttribute = {};
-		positionAttribute.binding = 0;
-		positionAttribute.location = 1;
-		positionAttribute.format = VK_FORMAT_R32G32B32_SFLOAT;
-		positionAttribute.offset = offsetof(Vertex, color);
-
-		description.attributes.push_back(positionAttribute);
-		description.attributes.push_back(colorAttribute);
-	}
-};
 
 
 class VulkanEngine {
@@ -632,15 +741,19 @@ public:
 	
 	VkPipeline _trianglePipeline;
 	VkPipeline _funkTrianglePipeline;
+	VkPipeline _meshPipeline;
 
 	VkPipelineLayout _trianglePipelineLayout;
-
-	
+	VkPipelineLayout _meshPipelineLayout;
+	Mesh monkey;
+	VkBuffer _monkey;
 
 	uint64_t _frameNumber;
 	bool _isInitialized = false;
 
 	bool _drawFunky = false;
+
+	glm::vec3 camPos;
 
 	void init();
 	void cleanup();
@@ -706,7 +819,7 @@ void VulkanEngine::init()
 	//We want a gpu that can write to the SDL surface and supports vulkan 1.2
 	vkb::PhysicalDeviceSelector selector{ vkb_inst };
 	auto phys_ret = selector
-		.set_minimum_version(1, 2)
+		.set_minimum_version(1, 1)
 		.add_required_extension(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME)
 		.set_surface(_surface)
 		.select();
@@ -716,6 +829,7 @@ void VulkanEngine::init()
 	vkb::DeviceBuilder deviceBuilder{ phys_ret.value() };	
 	
 	vkb::Device vkbDevice = deviceBuilder.build().value();
+	VkPhysicalDevice physDevice = phys_ret.value().physical_device;
 
 	// Get the VkDevice handle used in the rest of a vulkan application
 	_device = vkbDevice.device;
@@ -733,14 +847,90 @@ void VulkanEngine::init()
 		.build()
 		.value();
 
-	
+	VmaAllocator allocator;
+
+	VmaAllocatorCreateInfo allocatorInfo = {};
+	allocatorInfo.physicalDevice = phys_ret.value().physical_device;
+	allocatorInfo.device = _device;
+	//allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+	allocatorInfo.instance = _instance;
+	vmaCreateAllocator(&allocatorInfo, &allocator);
+
+
 	//store swapchain and its related images
 	_swapchain = vkbSwapchain.swapchain;
 	_swapchainImages = vkbSwapchain.get_images().value();
 	_swapchainImageViews= vkbSwapchain.get_image_views().value();
 
+	VkFormat formats[] = {
+		VK_FORMAT_D32_SFLOAT_S8_UINT,
+		VK_FORMAT_D32_SFLOAT,
+		VK_FORMAT_D24_UNORM_S8_UINT,
+		VK_FORMAT_D16_UNORM_S8_UINT,
+		VK_FORMAT_D16_UNORM
+	};
+
+	VkFormat depth_fmt = VK_FORMAT_UNDEFINED;
+	for (int i = 0; i < sizeof(formats) / sizeof(VkFormat); i++) {
+		VkFormatProperties cfg;
+		vkGetPhysicalDeviceFormatProperties(physDevice, formats[i], &cfg);
+		if (cfg.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+			depth_fmt = formats[i];
+			break;
+		}
+	}
+
+	if (depth_fmt == VK_FORMAT_UNDEFINED) {
+		fprintf(stderr, "Could not find a suitable depth format\n");
+		assert(false);
+	}
+
+	VkImageCreateInfo dimg_info = { };
+	dimg_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+	dimg_info.imageType = VK_IMAGE_TYPE_2D;
+	dimg_info.format = depth_fmt;
+	dimg_info.extent = {
+		_windowExtent.width,
+		_windowExtent.height,
+		1
+	};
+	dimg_info.mipLevels = 1;
+	dimg_info.arrayLayers = 1;
+	dimg_info.samples = VK_SAMPLE_COUNT_1_BIT;
+	dimg_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+	dimg_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+	VkImage depth_img;
+
+	VmaAllocationCreateInfo dimg_allocinfo = {};
+	
+	dimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+	dimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	VmaAllocation depth_alloc;
+	vmaCreateImage(allocator, &dimg_info, &dimg_allocinfo, &depth_img, &depth_alloc, nullptr);
+
+	VkImageAspectFlags aspect = 
+		(depth_fmt >= VK_FORMAT_D16_UNORM_S8_UINT) ?
+		VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT :
+		VK_IMAGE_ASPECT_DEPTH_BIT;
+
+	VkImageViewCreateInfo dview_info = {};
+	dview_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	dview_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	dview_info.image = depth_img;
+	dview_info.format = depth_fmt;
+	dview_info.subresourceRange.baseMipLevel = 0;
+	dview_info.subresourceRange.levelCount = 1;
+	dview_info.subresourceRange.baseArrayLayer = 0;
+	dview_info.subresourceRange.layerCount = 1;
+	dview_info.subresourceRange.aspectMask = aspect;
+
+	VkImageView depth_view;
+	VK_CHECK(vkCreateImageView(_device, &dview_info, nullptr, &depth_view));
+
+
 	//build the default render-pass we need to do rendering
-	_renderPass = vkutil::create_render_pass(_device, vkbSwapchain.image_format);
+	_renderPass = vkutil::create_render_pass(_device, vkbSwapchain.image_format,depth_fmt);
 
 
 	//create the framebuffers for the swapchain images. This will connect the render-pass to the images for rendering
@@ -751,7 +941,11 @@ void VulkanEngine::init()
 
 	for (int i = 0; i < swapchain_imagecount; i++) {
 		
-		fb_info.pAttachments = &_swapchainImageViews[i];
+		std::array<VkImageView, 2> attachments;
+		attachments[0] = _swapchainImageViews[i];
+		attachments[1] = depth_view;
+		fb_info.pAttachments = attachments.data();
+		fb_info.attachmentCount = 2;
 		VK_CHECK( vkCreateFramebuffer(_device, &fb_info, nullptr, &_framebuffers[i]));		
 	}
 
@@ -815,6 +1009,45 @@ void VulkanEngine::init()
 		"../../shaders/funky_triangle.frag.spv",
 		&_funkTrianglePipeline);
 
+	push_constant.size = sizeof(glm::mat4);
+	push_constant.stageFlags = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+
+	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_meshPipelineLayout));
+
+	vkutil::create_mesh_pipeline(_device, _windowExtent, _renderPass, _meshPipelineLayout,
+		"../../shaders/mesh.vert.spv",
+		"../../shaders/mesh.frag.spv",
+		&_meshPipeline);
+
+	
+   monkey = vkutil::load_mesh_from_obj("../../assets/monkey_smooth.obj");
+
+   //allocate vertex buffer
+   VkBufferCreateInfo bufferInfo = {};
+   bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+   bufferInfo.size = monkey.vertices.size() * sizeof(Vertex);
+   bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+   bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+   VkBufferCreateInfo vkbinfo = bufferInfo;
+
+   VmaAllocationCreateInfo vmaallocInfo = {};
+   vmaallocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+   //vmaallocInfo.requiredFlags = VkMemoryPropertyFlags(properties);
+   //vmaallocInfo.flags = vk::MemoryAllocateFlagBits::eDeviceAddress;
+   _monkey;
+   VmaAllocation allocation;
+   
+   VK_CHECK(vmaCreateBuffer(allocator, &vkbinfo, &vmaallocInfo, &_monkey, &allocation, nullptr));
+
+   //copy vertex data
+   void* data;
+   vmaMapMemory(allocator, allocation, &data);
+
+   memcpy(data, monkey.vertices.data(), monkey.vertices.size() * sizeof(Vertex));
+
+   vmaUnmapMemory(allocator, allocation);
+
 	//everything went fine
 	_isInitialized = true;
 }
@@ -840,17 +1073,19 @@ void VulkanEngine::draw() {
 	VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
 
 	//make a clear-color from frame number. This will flash with a 120 frame period.
-	VkClearValue clearValue;
+	std::array<VkClearValue, 2> clearValues;
 	float flash = abs(sin(_frameNumber / 120.f));
-	clearValue.color = { { 0.0f, 0.0f, flash, 1.0f } };	
+	clearValues[0].color = { { 0.0f, 0.0f, flash, 1.0f } };
+
+	clearValues[1].depthStencil.depth = 1.f;
 
 	//start the main renderpass. 
 	//We will use the clear color from above, and the framebuffer of the index the swapchain gave us
 	VkRenderPassBeginInfo rpInfo = vkinit::renderpass_begin_info(_renderPass,_windowExtent,_framebuffers[swapchainImageIndex]);
 	
 	//connect clear values
-	rpInfo.clearValueCount = 1;
-	rpInfo.pClearValues = &clearValue;	
+	rpInfo.clearValueCount = 2;
+	rpInfo.pClearValues = clearValues.data();	
 
 	vkCmdBeginRenderPass(cmd, &rpInfo, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -859,17 +1094,35 @@ void VulkanEngine::draw() {
 	if (_drawFunky)
 	{
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _funkTrianglePipeline);
+		std::array<float, 4> pushConstantData{ 0,0,0,0 };
+		pushConstantData[0] = _frameNumber / 120.f;
+
+		vkCmdPushConstants(cmd, _trianglePipelineLayout, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, sizeof(float) * 4, pushConstantData.data());
+
+		vkCmdDraw(cmd, 3, 1, 0, 0);
 	}
 	else {
-		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _trianglePipeline);
+
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipeline);
+		VkDeviceSize offset = 0;
+		
+		vkCmdBindVertexBuffers(cmd, 0, 1,&_monkey,&offset);
+		
+
+		glm::mat4 view = glm::translate(glm::mat4(1.f), camPos);
+		//glm::mat4 view = glm::lookAt(camPos,glm::vec3(0,0,0), glm::vec3(0,1,0));
+
+		glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
+		projection[1][1] *= -1;
+
+		glm::mat4 mesh_matrix = projection* view * glm::mat4{0.1f};
+
+		vkCmdPushConstants(cmd, _meshPipelineLayout, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, sizeof(glm::mat4), &mesh_matrix);
+
+		vkCmdDraw(cmd, monkey.indices.size(), 1, 0, 0);
 	}
 
-	std::array<float, 4> pushConstantData{0,0,0,0};
-	pushConstantData[0] = _frameNumber / 120.f;
 	
-	vkCmdPushConstants(cmd, _trianglePipelineLayout, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, sizeof(float) * 4, pushConstantData.data());
-
-	vkCmdDraw(cmd, 3, 1, 0, 0);
 
 	//finalize the render pass
 	vkCmdEndRenderPass(cmd);
@@ -956,6 +1209,8 @@ int main(int argc, char* argv[])
 {
 	VulkanEngine engine;
 	engine.init();
+	engine.camPos = glm::vec3(0);
+	engine.camPos.z = -3;
 
 	SDL_Event e;
 	bool bQuit = false;
@@ -969,10 +1224,26 @@ int main(int argc, char* argv[])
 			if (e.type == SDL_QUIT) bQuit = true;
 			else if (e.type == SDL_KEYDOWN)
 			{
-				if (e.key.keysym.sym == SDLK_SPACE)
+				switch (e.key.keysym.sym)
 				{
+				case SDLK_SPACE:
 					engine._drawFunky = !engine._drawFunky;
+					break;
+				case SDLK_a:
+					engine.camPos.x += 0.1;
+					break;
+				case SDLK_d:
+					engine.camPos.x -= 0.1;
+					break;
+
+				case SDLK_w:
+					engine.camPos.z += 0.1;
+					break;
+				case SDLK_s:
+					engine.camPos.z -= 0.1;
+					break;
 				}
+				
 			}
 		}
 
