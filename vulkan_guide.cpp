@@ -1,5 +1,5 @@
-﻿#include "volk.h"
-#define VK_NO_PROTOTYPES
+﻿//#include "volk.h"
+//#define VK_NO_PROTOTYPES
 
 #include "VkBootstrap.h"
 
@@ -14,6 +14,11 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <tiny_obj_loader.h>
+
+
+#include <imgui.h>
+#include <imgui_impl_sdl.h>
+#include <imgui_impl_vulkan.h>
 
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
@@ -736,6 +741,35 @@ namespace vkutil {
 			return false;
 		}
 	}
+
+	VkDescriptorPool create_imgui_descriptor_pool(VkDevice device) {
+		VkDescriptorPoolSize pool_sizes[] =
+		{
+			{ VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+			{ VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+		};
+		VkDescriptorPoolCreateInfo pool_info = {};
+		pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+		pool_info.maxSets = 1000 * IM_ARRAYSIZE(pool_sizes);
+		pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(pool_sizes);
+		pool_info.pPoolSizes = pool_sizes;
+
+		VkDescriptorPool pool;
+		VK_CHECK(vkCreateDescriptorPool(device, &pool_info, nullptr, &pool));
+
+		return pool;
+	}
+	
 }
 
 
@@ -809,7 +843,7 @@ void VulkanEngine::init()
 	assert(gWindow != nullptr);
 	
 	//Volk needs a pre-initialization before creating the vulkan instance, so that it can load the functions needed to init vulkan
-	volkInitialize();
+	//volkInitialize();
 
 	vkb::InstanceBuilder builder;
 
@@ -829,7 +863,7 @@ void VulkanEngine::init()
 	_debugMessenger = vkb_inst.debug_messenger;
 	
 	//now that instance is loaded, use volk to load all the vulkan functions and extensions
-	volkLoadInstance(_instance);
+	//volkLoadInstance(_instance);
 
 	
 
@@ -1058,6 +1092,59 @@ void VulkanEngine::init()
 
    vmaUnmapMemory(allocator, allocation);
 
+   VkDescriptorPool imguiPool = vkutil::create_imgui_descriptor_pool(_device);
+
+   ImGui::CreateContext();
+
+   ImGui_ImplSDL2_InitForVulkan(gWindow);
+   ImGui_ImplVulkan_InitInfo init_info = {};
+   init_info.Instance = _instance;
+   init_info.PhysicalDevice = physDevice;
+   init_info.Device = _device;
+   //init_info.QueueFamily = ;
+   init_info.Queue = _graphicsQueue;
+   //init_info.PipelineCache = ;
+   init_info.DescriptorPool = imguiPool;
+   //init_info.Allocator = g_Allocator;
+   init_info.MinImageCount = 3;
+   init_info.ImageCount = 3;
+   //init_info.CheckVkResultFn = check_vk_result;
+   ImGui_ImplVulkan_Init(&init_info, _renderPass);
+
+
+   //naming it cmd for shorter writing
+   VkCommandBuffer cmd = _mainCommandBuffer;
+
+   //begin the command buffer recording. We will use this command buffer exactly once, so we want to let vulkan know that
+   VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+   VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
+
+   
+
+   ImGui_ImplVulkan_CreateFontsTexture(cmd);
+
+
+   VK_CHECK(vkEndCommandBuffer(cmd));
+
+
+   ImGui_ImplVulkan_DestroyFontUploadObjects();
+
+   VkSubmitInfo submit = vkinit::submit_info(&cmd);
+   VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+   submit.pWaitDstStageMask = &waitStage;
+
+   submit.waitSemaphoreCount = 0;
+   submit.signalSemaphoreCount = 0;
+  
+
+   //submit command buffer to the queue and execute it.
+   // _renderFence will now block until the graphic commands finish execution
+   VK_CHECK(vkQueueSubmit(_graphicsQueue, 1, &submit, _renderFence));
+
+   vkQueueWaitIdle(_graphicsQueue);
+
 	//everything went fine
 	_isInitialized = true;
 }
@@ -1138,7 +1225,7 @@ void VulkanEngine::draw() {
 	}
 
 	
-
+	ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 	//finalize the render pass
 	vkCmdEndRenderPass(cmd);
 	//finalize the command buffer (we can no longer add commands, but it can now be executed)
@@ -1212,7 +1299,7 @@ void VulkanEngine::cleanup()
 	vkDestroySurfaceKHR(_instance, _surface, nullptr);
 
 	//destroy debug utils
-	vkDestroyDebugUtilsMessengerEXT(_instance, _debugMessenger, nullptr);
+	//vkDestroyDebugUtilsMessengerEXT(_instance, _debugMessenger, nullptr);
 
 	vkDestroyDevice(_device, nullptr);
 	vkDestroyInstance(_instance,nullptr);	
@@ -1233,9 +1320,20 @@ int main(int argc, char* argv[])
 	//main loop
 	while (!bQuit)
 	{		
+		ImGui_ImplVulkan_NewFrame();
+		ImGui_ImplSDL2_NewFrame(gWindow);
+		ImGui::NewFrame();
+		static bool bShowDemo = true;
+		ImGui::ShowDemoWindow(&bShowDemo);	
+
+		ImGui::Render();
+
 		//Handle events on queue
 		while (SDL_PollEvent(&e) != 0)
 		{
+			ImGui_ImplSDL2_ProcessEvent(&e);
+
+
 			//close the window when user alt-f4s or clicks the X button
 			if (e.type == SDL_WINDOWEVENT)
 			{
