@@ -11,6 +11,10 @@
 #include <SDL.h>
 #include <SDL_vulkan.h>
 
+#include <glm/glm.hpp>
+
+#define VMA_IMPLEMENTATION
+#include <vk_mem_alloc.h>
 
 //we want to immediately abort when there is an error. In normal engines this would give an error message to the user, or perform a dump of state.
 using namespace std;
@@ -232,6 +236,9 @@ namespace vkinit {
 
 	
 }
+
+
+
 namespace vkutil {
 
 	VkRenderPass create_render_pass(VkDevice device, VkFormat image_format) {
@@ -401,7 +408,84 @@ namespace vkutil {
 			return newPipeline;
 		}
 	};
+	bool create_mesh_pipeline(VkDevice device, VkExtent2D swapchainExtent, VkRenderPass renderPass, VkPipelineLayout layout, const std::string& vertex_shader, const std::string& frag_shader, VkPipeline* outPipeline) {
 
+		PipelineBuilder pipelineBuilder;
+
+		VkShaderModule vert_module;
+		VkShaderModule frag_module;
+
+		//load the fragment and vertex shaders for the triangle
+		//if any of the 2 give error we abort
+		if (!load_shader_module(vertex_shader, device, &vert_module) ||
+			!load_shader_module(frag_shader, device, &frag_module)) {
+			std::cout << "failed to create shader module\n";
+			return false;
+		}
+
+		//build the stage-create-info for both vertex and fragment stages. This lets the pipeline know the shader modules per stage
+		VkPipelineShaderStageCreateInfo vert_stage_info = vkinit::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, vert_module);
+
+		VkPipelineShaderStageCreateInfo frag_stage_info = vkinit::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, frag_module);
+
+		pipelineBuilder._shaderStages.push_back(vert_stage_info);
+		pipelineBuilder._shaderStages.push_back(frag_stage_info);
+
+
+		//vertex input controls how to read vertices from vertex buffers.
+		pipelineBuilder._vertexInputInfo = vkinit::vertex_input_state_create_info();
+
+
+
+		//input assembly is the configuration for drawing triangle lists, strips, or individual points.
+		//we are just going to draw triangle list
+		pipelineBuilder._inputAssembly = vkinit::input_assembly_create_info(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+
+		//build viewport and scissor from the swapchain extents
+		VkViewport viewport = {};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = (float)swapchainExtent.width;
+		viewport.height = (float)swapchainExtent.height;
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+
+		VkRect2D scissor = {};
+		scissor.offset = { 0, 0 };
+		scissor.extent = swapchainExtent;
+
+		pipelineBuilder._viewport = viewport;
+
+		pipelineBuilder._scissor = scissor;
+
+		//configure the rasterizer to draw filled triangles with normal culling
+		pipelineBuilder._rasterizer = vkinit::rasterization_state_create_info(VK_POLYGON_MODE_FILL);
+
+		//we dont use multisampling, so just run the default one
+		pipelineBuilder._multisampling = vkinit::multisampling_state_create_info();
+
+		//a single blend attachment with no blending and writing to RGBA
+		pipelineBuilder._colorBlendAttachment = vkinit::color_blend_attachment_state();
+
+		pipelineBuilder._pipelineLayout = layout;
+
+		//finally build the pipeline
+		VkPipeline newPipeline = pipelineBuilder.build_pipeline(device, renderPass);
+
+
+		//clean up the loaded shader modules, once the pipeline is built we no longer need it
+		vkDestroyShaderModule(device, frag_module, nullptr);
+		vkDestroyShaderModule(device, vert_module, nullptr);
+
+		//check that the pipeline was build correctly
+		if (newPipeline != VK_NULL_HANDLE) {
+			*outPipeline = newPipeline;
+			return true;
+		}
+		else {
+			return false;
+		}
+	}
 
 	bool create_triangle_pipeline(VkDevice device, VkExtent2D swapchainExtent, VkRenderPass renderPass,VkPipelineLayout layout,const std::string& vertex_shader, const std::string& frag_shader , VkPipeline* outPipeline) {
 		
@@ -480,6 +564,46 @@ namespace vkutil {
 		}
 	}
 }
+
+struct VertexInputDescription {
+	std::vector<VkVertexInputBindingDescription> bindings;
+	std::vector<VkVertexInputAttributeDescription> attributes;
+
+	VkPipelineVertexInputStateCreateFlags flags=0;
+};
+
+struct Vertex {
+
+	std::array<float, 3> position;
+	std::array<float, 3> color;
+
+	static VertexInputDescription getVertexInputState() {
+		VertexInputDescription description;
+
+		VkVertexInputBindingDescription mainBinding = {};
+		mainBinding.binding = 0;
+		mainBinding.stride = sizeof(Vertex);
+		mainBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		description.bindings.push_back(mainBinding);
+
+		VkVertexInputAttributeDescription positionAttribute = {};
+		positionAttribute.binding = 0;
+		positionAttribute.location = 0;
+		positionAttribute.format = VK_FORMAT_R32G32B32_SFLOAT;
+		positionAttribute.offset = offsetof(Vertex, position);
+
+		VkVertexInputAttributeDescription colorAttribute = {};
+		positionAttribute.binding = 0;
+		positionAttribute.location = 1;
+		positionAttribute.format = VK_FORMAT_R32G32B32_SFLOAT;
+		positionAttribute.offset = offsetof(Vertex, color);
+
+		description.attributes.push_back(positionAttribute);
+		description.attributes.push_back(colorAttribute);
+	}
+};
+
 
 class VulkanEngine {
 public:
