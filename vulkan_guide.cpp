@@ -1214,6 +1214,7 @@ int main(int argc, char* argv[])
 
 	SDL_Event e;
 	bool bQuit = false;
+	bool bStopRender = false;
 	//main loop
 	while (!bQuit)
 	{		
@@ -1221,6 +1222,18 @@ int main(int argc, char* argv[])
 		while (SDL_PollEvent(&e) != 0)
 		{
 			//close the window when user alt-f4s or clicks the X button
+			if (e.type == SDL_WINDOWEVENT)
+			{
+				switch (e.window.event) {
+				case SDL_WINDOWEVENT_MINIMIZED:
+					bStopRender = true;
+					break;
+					
+				case SDL_WINDOWEVENT_RESTORED:
+					bStopRender = false;
+					break;
+				}
+			}
 			if (e.type == SDL_QUIT) bQuit = true;
 			else if (e.type == SDL_KEYDOWN)
 			{
@@ -1247,7 +1260,10 @@ int main(int argc, char* argv[])
 			}
 		}
 
-		engine.draw();	
+		if (!bStopRender) {
+
+			engine.draw();
+		}
 	}
 
 	if (engine._isInitialized) {
