@@ -315,19 +315,35 @@ struct Vertex {
 	}
 };
 
-struct Mesh {
-	std::vector<Vertex> vertices;
-	std::vector<uint32_t> indices;
+struct AllocatedBuffer {
+	VkBuffer _buffer;
+	VmaAllocation _allocation;
 };
 
 struct AllocatedImage {
-	VkImage image;	
-	VmaAllocation allocation;
+	VkImage _image;
+	VmaAllocation _allocation;
 };
+
+
+struct Mesh {
+	std::vector<Vertex> _vertices;
+	std::vector<uint32_t> _indices;
+
+	AllocatedBuffer _vertexBuffer;
+
+	void bind_vertex_buffer(VkCommandBuffer cmd) {
+		//bind the mesh vertex buffer with offset 0
+		VkDeviceSize offset = 0;
+		vkCmdBindVertexBuffers(cmd, 0, 1, &_vertexBuffer._buffer, &offset);
+	}
+};
+
+
 
 namespace vkutil {
 
-	Mesh load_mesh_from_obj(const std::string& filename) {
+	bool load_mesh_from_obj(const std::string& filename,std::vector<Vertex> & outVertices, std::vector<uint32_t> & outIndices) {
 		std::vector<tinyobj::material_t> materials;
 			
 		tinyobj::attrib_t attrib;
@@ -342,9 +358,9 @@ namespace vkutil {
 		}
 		if (!err.empty()) {
 			std::cerr << err << std::endl;
+			return false;
 		}
 
-		Mesh newMesh;
 		// Loop over shapes
 		for (size_t s = 0; s < shapes.size(); s++) {
 			// Loop over faces(polygon)
@@ -374,14 +390,14 @@ namespace vkutil {
 					new_vert.normal.y = ny;
 					new_vert.normal.z = nz;
 
-					newMesh.indices.push_back(newMesh.vertices.size());
-					newMesh.vertices.push_back(new_vert);					
+					outIndices.push_back(outVertices.size());
+					outVertices.push_back(new_vert);
 				}
 				index_offset += fv;				
 			}
 		}
 
-		return newMesh;
+		return true;
 	}
 
 	VkRenderPass create_render_pass(VkDevice device, VkFormat image_format, VkFormat depth_format) {
@@ -782,12 +798,14 @@ struct DeletionQueue
 		for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
 			(*it)(); //call functors
 		}
+
+		deletors.clear();
 	}
 };
 class VulkanEngine {
 public:
 
-	
+	VmaAllocator _allocator;
 	VkInstance _instance;
 	VkDevice _device;
 	VkDebugUtilsMessengerEXT _debugMessenger;	
@@ -815,8 +833,8 @@ public:
 
 	VkPipelineLayout _trianglePipelineLayout;
 	VkPipelineLayout _meshPipelineLayout;
-	Mesh monkey;
-	VkBuffer _monkey;
+
+	Mesh _monkeyMesh;
 
 	uint64_t _frameNumber;
 	bool _isInitialized = false;
@@ -830,6 +848,8 @@ public:
 	void init();
 	void cleanup();
 	void draw();
+	
+	bool upload_mesh(const std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices,Mesh& outMesh);
 };
 
 SDL_Window* gWindow;
@@ -920,17 +940,16 @@ void VulkanEngine::init()
 		.build()
 		.value();
 
-	VmaAllocator allocator;
 
 	VmaAllocatorCreateInfo allocatorInfo = {};
 	allocatorInfo.physicalDevice = phys_ret.value().physical_device;
 	allocatorInfo.device = _device;	
 	allocatorInfo.instance = _instance;
-	vmaCreateAllocator(&allocatorInfo, &allocator);
+	vmaCreateAllocator(&allocatorInfo, &_allocator);
 
 	//add the destruction of allocator
 	_mainDeletionQueue.push_function([=]() {
-		vmaDestroyAllocator(allocator);
+		vmaDestroyAllocator(_allocator);
 	});
 
 	//store swapchain and its related images
@@ -977,13 +996,13 @@ void VulkanEngine::init()
 	dimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 	
 	//allocate and create the image
-	vmaCreateImage(allocator, &dimg_info, &dimg_allocinfo, &_depthImage.image, &_depthImage.allocation, nullptr);
+	vmaCreateImage(_allocator, &dimg_info, &dimg_allocinfo, &_depthImage._image, &_depthImage._allocation, nullptr);
 
 	//build a image-view for the depth image to use for rendering
 	VkImageViewCreateInfo dview_info = {};
 	dview_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 	dview_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	dview_info.image = _depthImage.image;
+	dview_info.image = _depthImage._image;
 	dview_info.format = selectedDepthFormat;
 	dview_info.subresourceRange.baseMipLevel = 0;
 	dview_info.subresourceRange.levelCount = 1;
@@ -996,7 +1015,7 @@ void VulkanEngine::init()
 	VK_CHECK(vkCreateImageView(_device, &dview_info, nullptr, &_depthImageView));
 
 	_mainDeletionQueue.push_function([=]() {
-		vmaDestroyImage(allocator, _depthImage.image, _depthImage.allocation);
+		vmaDestroyImage(_allocator, _depthImage._image, _depthImage._allocation);
 		vkDestroyImageView(_device, _depthImageView, nullptr);
 	});
 
@@ -1126,36 +1145,13 @@ void VulkanEngine::init()
 		vkDestroyPipelineLayout(_device, _meshPipelineLayout, nullptr);
 	});
 	
-   monkey = vkutil::load_mesh_from_obj("../../assets/monkey_smooth.obj");
 
-   //allocate vertex buffer
-   VkBufferCreateInfo bufferInfo = {};
-   bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-   bufferInfo.size = monkey.vertices.size() * sizeof(Vertex);
-   bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-   bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	std::vector<Vertex> vertices;
+	std::vector<uint32_t> indices;
 
-   VkBufferCreateInfo vkbinfo = bufferInfo;
-
-   VmaAllocationCreateInfo vmaallocInfo = {};
-   vmaallocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-
-   VmaAllocation allocation;   
-   VK_CHECK(vmaCreateBuffer(allocator, &vkbinfo, &vmaallocInfo, &_monkey, &allocation, nullptr));
-
-   //add the destruction of mesh buffer
-   _mainDeletionQueue.push_function([=]() {
-	
-	   vmaDestroyBuffer(allocator, _monkey, allocation);
-	});
-
-   //copy vertex data
-   void* data;
-   vmaMapMemory(allocator, allocation, &data);
-
-   memcpy(data, monkey.vertices.data(), monkey.vertices.size() * sizeof(Vertex));
-
-   vmaUnmapMemory(allocator, allocation);
+   vkutil::load_mesh_from_obj("../../assets/monkey_smooth.obj",vertices,indices);
+   
+   upload_mesh(vertices, indices,_monkeyMesh);  
 
    VkDescriptorPool imguiPool = vkutil::create_imgui_descriptor_pool(_device);
 
@@ -1263,9 +1259,7 @@ void VulkanEngine::draw() {
 
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipeline);
 
-		//bind the mesh vertex buffer with offset 0
-		VkDeviceSize offset = 0;		
-		vkCmdBindVertexBuffers(cmd, 0, 1,&_monkey,&offset);
+		_monkeyMesh.bind_vertex_buffer(cmd);
 		
 		//make a model view matrix for rendering the object
 		//camera view
@@ -1282,7 +1276,7 @@ void VulkanEngine::draw() {
 		vkCmdPushConstants(cmd, _meshPipelineLayout, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, sizeof(glm::mat4), &mesh_matrix);
 
 		//we can now draw
-		vkCmdDraw(cmd, monkey.indices.size(), 1, 0, 0);
+		vkCmdDraw(cmd, _monkeyMesh._indices.size(), 1, 0, 0);
 	}
 
 	
@@ -1330,12 +1324,46 @@ void VulkanEngine::draw() {
 	//increase the number of frames drawn
 	_frameNumber++;
 }
+
+bool VulkanEngine::upload_mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, Mesh& outMesh)
+{
+	outMesh._vertices = vertices;
+	outMesh._indices = indices;
+
+	//allocate vertex buffer
+	VkBufferCreateInfo bufferInfo = {};
+	bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bufferInfo.size = _monkeyMesh._vertices.size() * sizeof(Vertex);
+	bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+	VkBufferCreateInfo vkbinfo = bufferInfo;
+
+	VmaAllocationCreateInfo vmaallocInfo = {};
+	vmaallocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+
+	VK_CHECK(vmaCreateBuffer(_allocator, &vkbinfo, &vmaallocInfo, &outMesh._vertexBuffer._buffer, &outMesh._vertexBuffer._allocation, nullptr));
+
+	//add the destruction of mesh buffer
+	_mainDeletionQueue.push_function([=]() {
+
+		vmaDestroyBuffer(_allocator , outMesh._vertexBuffer._buffer, outMesh._vertexBuffer._allocation);
+	});
+
+
+	//copy vertex data
+	void* data;
+	vmaMapMemory(_allocator, outMesh._vertexBuffer._allocation, &data);
+
+	memcpy(data, _monkeyMesh._vertices.data(), _monkeyMesh._vertices.size() * sizeof(Vertex));
+
+	vmaUnmapMemory(_allocator, outMesh._vertexBuffer._allocation);
+}
+
 void VulkanEngine::cleanup()
 {	
 	//make sure the gpu has stopped doing its things
 	vkWaitForFences(_device, 1, &_renderFence, true, 999999999);
-
-
 	
 	_mainDeletionQueue.flush();
 	
