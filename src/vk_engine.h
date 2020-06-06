@@ -38,6 +38,7 @@ public:
 	VmaAllocator _allocator;
 	VkInstance _instance;
 	VkDevice _device;
+	VkPhysicalDevice _physicalDevice;
 	VkDebugUtilsMessengerEXT _debugMessenger;
 
 	VkSemaphore _presentSemaphore, _renderSemaphore;
@@ -75,9 +76,30 @@ public:
 
 	DeletionQueue _mainDeletionQueue;
 
+	//initializes everything in the engine
 	void init();
+
+	//shuts down the engine
 	void cleanup();
+
+	//draw loop
 	void draw();
 
 	bool upload_mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, Mesh& outMesh);
+
+private:
+
+	void init_commands(uint32_t graphics_queue_family);
+
+	void init_syncronization_structures();
+
+	VkFormat select_depth_format();
+
+	void init_imgui();
+
+	void init_framebuffers(int swapchain_imagecount);
+
+	void init_pipelines();
+
+	void init_depth_image(VkFormat selectedDepthFormat);
 };

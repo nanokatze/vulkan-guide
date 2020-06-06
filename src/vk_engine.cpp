@@ -480,7 +480,7 @@ void VulkanEngine::init()
 	vkb::DeviceBuilder deviceBuilder{ phys_ret.value() };	
 	
 	vkb::Device vkbDevice = deviceBuilder.build().value();
-	VkPhysicalDevice physDevice = phys_ret.value().physical_device;
+	_physicalDevice = phys_ret.value().physical_device;
 
 	// Get the VkDevice handle used in the rest of a vulkan application
 	_device = vkbDevice.device;
@@ -490,6 +490,14 @@ void VulkanEngine::init()
 		vkDestroyDevice(_device, nullptr);
 		vkDestroyInstance(_instance, nullptr);
 	});
+
+	//initialize the memory allocator
+	VmaAllocatorCreateInfo allocatorInfo = {};
+	allocatorInfo.physicalDevice = phys_ret.value().physical_device;
+	allocatorInfo.device = _device;
+	allocatorInfo.instance = _instance;
+	vmaCreateAllocator(&allocatorInfo, &_allocator);
+
 
 	//now we begin to create the swapchain. We are going to use the lib so it configures everything for us
 	//we want a swapchain with the same size as the SDL window surface, and with default optimal formats
@@ -502,14 +510,7 @@ void VulkanEngine::init()
 		.set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
 		.set_desired_extent(_windowExtent.width, _windowExtent.height)
 		.build()
-		.value();
-
-
-	VmaAllocatorCreateInfo allocatorInfo = {};
-	allocatorInfo.physicalDevice = phys_ret.value().physical_device;
-	allocatorInfo.device = _device;	
-	allocatorInfo.instance = _instance;
-	vmaCreateAllocator(&allocatorInfo, &_allocator);
+		.value();	
 
 	//add the destruction of allocator
 	_mainDeletionQueue.push_function([=]() {
@@ -526,103 +527,49 @@ void VulkanEngine::init()
 		vkDestroySwapchainKHR(_device, _swapchain, nullptr);
 	});
 
-	//find a depth-buffer format to use
-	VkFormat formats[] = {
-		VK_FORMAT_D32_SFLOAT_S8_UINT,
-		VK_FORMAT_D32_SFLOAT,
-		VK_FORMAT_D24_UNORM_S8_UINT,
-		VK_FORMAT_D16_UNORM_S8_UINT,
-		VK_FORMAT_D16_UNORM
-	};
 
-	VkFormat selectedDepthFormat = VK_FORMAT_UNDEFINED;
-	for (int i = 0; i < sizeof(formats) / sizeof(VkFormat); i++) {
-		VkFormatProperties cfg;
-		vkGetPhysicalDeviceFormatProperties(physDevice, formats[i], &cfg);
-		if (cfg.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
-			selectedDepthFormat = formats[i];
-			break;
-		}
-	}
+	//create depth image
+	VkFormat selectedDepthFormat = select_depth_format();
 
-	VkExtent3D depthImageExtent = {
-		_windowExtent.width,
-		_windowExtent.height,
-		1
-	};
+	init_depth_image(selectedDepthFormat);
 
-	//the depth image will be a image with the format we selected and Depth Attachment usage flag
-	VkImageCreateInfo dimg_info = vkinit::image_create_info(selectedDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depthImageExtent);	
-
-	//for the depth image, we want to allocate it from gpu local memory
-	VmaAllocationCreateInfo dimg_allocinfo = {};	
-	dimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-	dimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	
-	//allocate and create the image
-	vmaCreateImage(_allocator, &dimg_info, &dimg_allocinfo, &_depthImage._image, &_depthImage._allocation, nullptr);
-
-	//build a image-view for the depth image to use for rendering
-	VkImageViewCreateInfo dview_info = {};
-	dview_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	dview_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	dview_info.image = _depthImage._image;
-	dview_info.format = selectedDepthFormat;
-	dview_info.subresourceRange.baseMipLevel = 0;
-	dview_info.subresourceRange.levelCount = 1;
-	dview_info.subresourceRange.baseArrayLayer = 0;
-	dview_info.subresourceRange.layerCount = 1;
-	dview_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-
-	
-	
-	VK_CHECK(vkCreateImageView(_device, &dview_info, nullptr, &_depthImageView));
-
-	_mainDeletionQueue.push_function([=]() {
-		vmaDestroyImage(_allocator, _depthImage._image, _depthImage._allocation);
-		vkDestroyImageView(_device, _depthImageView, nullptr);
-	});
 
 	//build the default render-pass we need to do rendering
 	_renderPass = vkutil::create_render_pass(_device, vkbSwapchain.image_format,selectedDepthFormat);
 
 	_mainDeletionQueue.push_function([=]() {
 		vkDestroyRenderPass(_device, _renderPass, nullptr);
-	});
-
-	//create the framebuffers for the swapchain images. This will connect the render-pass to the images for rendering
-	VkFramebufferCreateInfo fb_info = vkinit::framebuffer_create_info(_renderPass,_windowExtent);
-
-	const uint32_t swapchain_imagecount = vkbSwapchain.image_count;
-	_framebuffers = std::vector<VkFramebuffer>(swapchain_imagecount);
-
-	for (int i = 0; i < swapchain_imagecount; i++) {
-		
-		std::array<VkImageView, 2> attachments;
-		attachments[0] = _swapchainImageViews[i];
-		attachments[1] = _depthImageView;
-		fb_info.pAttachments = attachments.data();
-		fb_info.attachmentCount = 2;
-		VK_CHECK( vkCreateFramebuffer(_device, &fb_info, nullptr, &_framebuffers[i]));		
-	}
-
-	//add the destruction of framebuffers
-	_mainDeletionQueue.push_function([=]() {	
-
-		//destroy swapchain resources
-		for (int i = 0; i < _framebuffers.size(); i++) {
-			vkDestroyFramebuffer(_device, _framebuffers[i], nullptr);
-
-			vkDestroyImageView(_device, _swapchainImageViews[i], nullptr);
-		}
-	});
+	}); 
+	
+	init_framebuffers(vkbSwapchain.image_count);
 
 	// use vkbootstrap to get a Graphics queue
 	_graphicsQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
 
-
+	//initialize the commands with a queue index for that graphics queue
 	uint32_t graphics_queue_family = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
 
+	init_commands(graphics_queue_family);
+
+	init_syncronization_structures();
+
+	init_pipelines();	
+
+	std::vector<Vertex> vertices;
+	std::vector<uint32_t> indices;
+
+   vkutil::load_mesh_from_obj("../../assets/monkey_smooth.obj",vertices,indices);
+   
+   upload_mesh(vertices, indices,_monkeyMesh);  
+
+   init_imgui();
+
+	//everything went fine
+	_isInitialized = true;
+}
+
+void VulkanEngine::init_commands(uint32_t graphics_queue_family)
+{
 	//create a command pool for commands submitted to the graphics queue.
 	//we also want the pool to allow for resetting of individual command buffers
 	VkCommandPoolCreateInfo commandPoolInfo = vkinit::command_pool_create_info(graphics_queue_family, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
@@ -635,11 +582,14 @@ void VulkanEngine::init()
 	VK_CHECK(vkAllocateCommandBuffers(_device, &cmdAllocInfo, &_mainCommandBuffer));
 
 	//add the destruction of command pool. Queue and buffers dont have to get deleted
-	_mainDeletionQueue.push_function([=]() {	
+	_mainDeletionQueue.push_function([=]() {
 
 		vkDestroyCommandPool(_device, _commandPool, nullptr);
 	});
+}
 
+void VulkanEngine::init_syncronization_structures()
+{
 	//create syncronization structures
 	//one fence to control when the gpu has finished rendering the frame,
 	//and 2 semaphores to syncronize rendering with swapchain
@@ -652,15 +602,123 @@ void VulkanEngine::init()
 
 	VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_presentSemaphore));
 	VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_renderSemaphore));
-	
+
 	//add the destruction of sync primitives
 	_mainDeletionQueue.push_function([=]() {
 
 		vkDestroyFence(_device, _renderFence, nullptr);
 		vkDestroySemaphore(_device, _renderSemaphore, nullptr);
 		vkDestroySemaphore(_device, _presentSemaphore, nullptr);
-	});
+		});
+}
 
+VkFormat VulkanEngine::select_depth_format()
+{
+	//find a depth-buffer format to use
+	VkFormat formats[] = {
+		VK_FORMAT_D32_SFLOAT_S8_UINT,
+		VK_FORMAT_D32_SFLOAT,
+		VK_FORMAT_D24_UNORM_S8_UINT,
+		VK_FORMAT_D16_UNORM_S8_UINT,
+		VK_FORMAT_D16_UNORM
+	};
+
+	VkFormat selectedDepthFormat = VK_FORMAT_UNDEFINED;
+	for (int i = 0; i < sizeof(formats) / sizeof(VkFormat); i++) {
+		VkFormatProperties cfg;
+		vkGetPhysicalDeviceFormatProperties(_physicalDevice, formats[i], &cfg);
+		if (cfg.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+			return formats[i];			
+		}
+	}
+	return VK_FORMAT_UNDEFINED;
+}
+
+void VulkanEngine::init_imgui()
+{
+	VkDescriptorPool imguiPool = vkutil::create_imgui_descriptor_pool(_device);
+
+	ImGui::CreateContext();
+
+	ImGui_ImplSDL2_InitForVulkan(gWindow);
+
+	ImGui_ImplVulkan_InitInfo init_info = {};
+	init_info.Instance = _instance;
+	init_info.PhysicalDevice = _physicalDevice;
+	init_info.Device = _device;
+	init_info.Queue = _graphicsQueue;
+	init_info.DescriptorPool = imguiPool;
+	init_info.MinImageCount = 3;
+	init_info.ImageCount = 3;
+
+	ImGui_ImplVulkan_Init(&init_info, _renderPass);
+
+	//add the destruction of mesh buffer
+	_mainDeletionQueue.push_function([=]() {
+
+		vkDestroyDescriptorPool(_device, imguiPool, nullptr);
+		ImGui_ImplVulkan_Shutdown();
+		});
+
+	//naming it cmd for shorter writing
+	VkCommandBuffer cmd = _mainCommandBuffer;
+
+	//begin the command buffer recording. We will use this command buffer exactly once, so we want to let vulkan know that
+	VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+	VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
+
+	ImGui_ImplVulkan_CreateFontsTexture(cmd);
+
+	VK_CHECK(vkEndCommandBuffer(cmd));
+
+	VkSubmitInfo submit = vkinit::submit_info(&cmd);
+	VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+	submit.pWaitDstStageMask = &waitStage;
+
+	//submit command buffer to the queue and execute it.
+	// _renderFence will now block until the graphic commands finish execution
+	VK_CHECK(vkQueueSubmit(_graphicsQueue, 1, &submit, _renderFence));
+
+	//wait until the gpu has finished uploading
+	VK_CHECK(vkWaitForFences(_device, 1, &_renderFence, true, 1000000000));
+
+	ImGui_ImplVulkan_DestroyFontUploadObjects();
+}
+
+void VulkanEngine::init_framebuffers(int swapchain_imagecount)
+{
+	//create the framebuffers for the swapchain images. This will connect the render-pass to the images for rendering
+	VkFramebufferCreateInfo fb_info = vkinit::framebuffer_create_info(_renderPass, _windowExtent);
+
+	
+	_framebuffers = std::vector<VkFramebuffer>(swapchain_imagecount);
+
+	for (int i = 0; i < swapchain_imagecount; i++) {
+
+		std::array<VkImageView, 2> attachments;
+		attachments[0] = _swapchainImageViews[i];
+		attachments[1] = _depthImageView;
+		fb_info.pAttachments = attachments.data();
+		fb_info.attachmentCount = 2;
+		VK_CHECK(vkCreateFramebuffer(_device, &fb_info, nullptr, &_framebuffers[i]));
+	}
+
+	//add the destruction of framebuffers
+	_mainDeletionQueue.push_function([=]() {
+
+		//destroy swapchain resources
+		for (int i = 0; i < _framebuffers.size(); i++) {
+			vkDestroyFramebuffer(_device, _framebuffers[i], nullptr);
+
+			vkDestroyImageView(_device, _swapchainImageViews[i], nullptr);
+		}
+	});
+}
+
+void VulkanEngine::init_pipelines()
+{
 	//build the pipeline layout that controls the inputs/outputs of the shader	
 	VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();
 
@@ -677,7 +735,7 @@ void VulkanEngine::init()
 	pipeline_layout_info.pushConstantRangeCount = 1;
 
 	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_trianglePipelineLayout));
-	
+
 	vkutil::create_triangle_pipeline(_device, _windowExtent, _renderPass, _trianglePipelineLayout,
 		"../../shaders/triangle.vert.spv",
 		"../../shaders/triangle.frag.spv",
@@ -698,9 +756,9 @@ void VulkanEngine::init()
 		"../../shaders/mesh.frag.spv",
 		&_meshPipeline);
 
-	//add the destruction of pipelines and layouts
+	//add the destruction of pipelines and their layouts
 	_mainDeletionQueue.push_function([=]() {
-		
+
 		vkDestroyPipeline(_device, _trianglePipeline, nullptr);
 		vkDestroyPipeline(_device, _funkTrianglePipeline, nullptr);
 		vkDestroyPipeline(_device, _meshPipeline, nullptr);
@@ -708,67 +766,47 @@ void VulkanEngine::init()
 		vkDestroyPipelineLayout(_device, _trianglePipelineLayout, nullptr);
 		vkDestroyPipelineLayout(_device, _meshPipelineLayout, nullptr);
 	});
-	
-
-	std::vector<Vertex> vertices;
-	std::vector<uint32_t> indices;
-
-   vkutil::load_mesh_from_obj("../../assets/monkey_smooth.obj",vertices,indices);
-   
-   upload_mesh(vertices, indices,_monkeyMesh);  
-
-   VkDescriptorPool imguiPool = vkutil::create_imgui_descriptor_pool(_device);
-
-   ImGui::CreateContext();
-
-   ImGui_ImplSDL2_InitForVulkan(gWindow);
-
-   ImGui_ImplVulkan_InitInfo init_info = {};
-   init_info.Instance = _instance;
-   init_info.PhysicalDevice = physDevice;
-   init_info.Device = _device;   
-   init_info.Queue = _graphicsQueue;  
-   init_info.DescriptorPool = imguiPool;   
-   init_info.MinImageCount = 3;
-   init_info.ImageCount = 3;
-
-   ImGui_ImplVulkan_Init(&init_info, _renderPass);
-
-   //add the destruction of mesh buffer
-   _mainDeletionQueue.push_function([=]() {
-
-	   vkDestroyDescriptorPool(_device, imguiPool, nullptr);
-	   ImGui_ImplVulkan_Shutdown();
-   });
-
-   //naming it cmd for shorter writing
-   VkCommandBuffer cmd = _mainCommandBuffer;
-
-   //begin the command buffer recording. We will use this command buffer exactly once, so we want to let vulkan know that
-   VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-
-   VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));   
-   
-   ImGui_ImplVulkan_CreateFontsTexture(cmd);
-
-   VK_CHECK(vkEndCommandBuffer(cmd));  
-
-   VkSubmitInfo submit = vkinit::submit_info(&cmd);
-   VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-
-   submit.pWaitDstStageMask = &waitStage;
-
-   //submit command buffer to the queue and execute it.
-   // _renderFence will now block until the graphic commands finish execution
-   VK_CHECK(vkQueueSubmit(_graphicsQueue, 1, &submit, _renderFence));
-
-   //wait until the gpu has finished uploading
-   VK_CHECK(vkWaitForFences(_device, 1, &_renderFence, true, 1000000000));
-  
-   ImGui_ImplVulkan_DestroyFontUploadObjects();
-	//everything went fine
-	_isInitialized = true;
 }
+
+void VulkanEngine::init_depth_image(VkFormat selectedDepthFormat)
+{
+	VkExtent3D depthImageExtent = {
+		_windowExtent.width,
+		_windowExtent.height,
+		1
+	};
+
+	//the depth image will be a image with the format we selected and Depth Attachment usage flag
+	VkImageCreateInfo dimg_info = vkinit::image_create_info(selectedDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, depthImageExtent);
+
+	//for the depth image, we want to allocate it from gpu local memory
+	VmaAllocationCreateInfo dimg_allocinfo = {};
+	dimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+	dimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+	//allocate and create the image
+	vmaCreateImage(_allocator, &dimg_info, &dimg_allocinfo, &_depthImage._image, &_depthImage._allocation, nullptr);
+
+	//build a image-view for the depth image to use for rendering
+	VkImageViewCreateInfo dview_info = {};
+	dview_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	dview_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	dview_info.image = _depthImage._image;
+	dview_info.format = selectedDepthFormat;
+	dview_info.subresourceRange.baseMipLevel = 0;
+	dview_info.subresourceRange.levelCount = 1;
+	dview_info.subresourceRange.baseArrayLayer = 0;
+	dview_info.subresourceRange.layerCount = 1;
+	dview_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+
+	VK_CHECK(vkCreateImageView(_device, &dview_info, nullptr, &_depthImageView));
+
+	_mainDeletionQueue.push_function([=]() {
+		vmaDestroyImage(_allocator, _depthImage._image, _depthImage._allocation);
+		vkDestroyImageView(_device, _depthImageView, nullptr);
+	});
+}
+
 void VulkanEngine::draw() {	
 	
 	//wait until the gpu has finished rendering the last frame. Timeout of 1 second
