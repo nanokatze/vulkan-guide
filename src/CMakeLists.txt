@@ -1,8 +1,9 @@
 
 # Add source to this project's executable.
 add_executable (vulkan_guide 
-"vulkan_guide.cpp"
- "vulkan_guide.h" 
+"main.cpp"
+"vk_engine.cpp"
+ "vk_engine.h" 
  "vk_mesh.cpp" 
  "vk_mesh.h" 
  "vk_types.h" 
@@ -16,4 +17,4 @@ target_include_directories(vulkan_guide PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 
 target_link_libraries(vulkan_guide  vkbootstrap vma glm tinyobjloader imgui)
 
-target_link_libraries(vulkan_guide Vulkan::Vulkan sdl2 )
+target_link_libraries(vulkan_guide Vulkan::Vulkan sdl2)

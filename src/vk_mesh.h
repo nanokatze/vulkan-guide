@@ -13,11 +13,7 @@ struct Mesh {
 
 	AllocatedBuffer _vertexBuffer;
 
-	void bind_vertex_buffer(VkCommandBuffer cmd) {
-		//bind the mesh vertex buffer with offset 0
-		VkDeviceSize offset = 0;
-		vkCmdBindVertexBuffers(cmd, 0, 1, &_vertexBuffer._buffer, &offset);
-	}
+	void bind_vertex_buffer(VkCommandBuffer cmd);
 };
 
 

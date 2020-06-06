@@ -1,11 +1,12 @@
 ﻿#include "VkBootstrap.h"
 
-#include "vulkan_guide.h"
+#include "vk_engine.h"
 #include <vector>
 #include <array>
 #include <fstream>
 #include <functional>
 #include <deque>
+#include <iostream>
 
 #include <SDL.h>
 #include <SDL_vulkan.h>
@@ -28,6 +29,8 @@
 
 //set to false to disable validation layers
 const bool bUseValidationLayers = true;
+
+struct SDL_Window* gWindow = nullptr;
 
 namespace vkutil{
 	VkRenderPass create_render_pass(VkDevice device, VkFormat image_format, VkFormat depth_format) {
@@ -402,7 +405,7 @@ namespace vkutil{
 		VkDescriptorPoolCreateInfo pool_info = {};
 		pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-		pool_info.maxSets = 1000;// *IM_ARRAYSIZE(pool_sizes);
+		pool_info.maxSets = 1000;
 		pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(pool_sizes);
 		pool_info.pPoolSizes = pool_sizes;
 
@@ -413,75 +416,7 @@ namespace vkutil{
 	}	
 }
 
-struct DeletionQueue
-{
-	std::deque<std::function<void()>> deletors;
 
-	
-	void push_function(std::function<void()>&& function) {
-		deletors.push_back(function);
-	}
-
-	void flush() {
-		// reverse iterate the deletion queue to execute all the functions
-		for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
-			(*it)(); //call functors
-		}
-
-		deletors.clear();
-	}
-};
-class VulkanEngine {
-public:
-
-	VmaAllocator _allocator;
-	VkInstance _instance;
-	VkDevice _device;
-	VkDebugUtilsMessengerEXT _debugMessenger;	
-	
-	VkSemaphore _presentSemaphore, _renderSemaphore;
-	VkFence _renderFence;	
-
-	VkQueue _graphicsQueue;
-	VkCommandPool _commandPool;
-	VkCommandBuffer _mainCommandBuffer;
-
-	VkSurfaceKHR _surface;
-	VkRenderPass _renderPass;
-	VkExtent2D _windowExtent;
-	VkSwapchainKHR _swapchain;
-	std::vector<VkFramebuffer> _framebuffers;
-	std::vector<VkImage> _swapchainImages;
-	std::vector<VkImageView> _swapchainImageViews;
-	AllocatedImage _depthImage;
-	VkImageView _depthImageView;
-
-	VkPipeline _trianglePipeline;
-	VkPipeline _funkTrianglePipeline;
-	VkPipeline _meshPipeline;
-
-	VkPipelineLayout _trianglePipelineLayout;
-	VkPipelineLayout _meshPipelineLayout;
-
-	Mesh _monkeyMesh;
-
-	uint64_t _frameNumber;
-	bool _isInitialized = false;
-
-	bool _drawFunky = false;
-
-	glm::vec3 camPos;
-
-	DeletionQueue _mainDeletionQueue;
-
-	void init();
-	void cleanup();
-	void draw();
-	
-	bool upload_mesh(const std::vector<Vertex> &vertices, const std::vector<uint32_t> &indices,Mesh& outMesh);
-};
-
-SDL_Window* gWindow;
 void VulkanEngine::init()
 {
 	_frameNumber = 0;
@@ -1001,85 +936,3 @@ void VulkanEngine::cleanup()
 	SDL_DestroyWindow(gWindow);
 }
 
-int main(int argc, char* argv[])
-{
-	VulkanEngine engine;
-	engine.init();
-	engine.camPos = glm::vec3(0);
-	engine.camPos.z = -3;
-
-	SDL_Event e;
-	bool bQuit = false;
-	bool bStopRender = false;
-	//main loop
-	while (!bQuit)
-	{		
-		ImGui_ImplVulkan_NewFrame();
-		ImGui_ImplSDL2_NewFrame(gWindow);
-
-		ImGui::NewFrame();
-
-		static bool bShowDemo = true;
-
-		ImGui::ShowDemoWindow(&bShowDemo);	
-
-		ImGui::Render();
-
-		//Handle events on queue
-		while (SDL_PollEvent(&e) != 0)
-		{
-			ImGui_ImplSDL2_ProcessEvent(&e);
-
-
-			//close the window when user alt-f4s or clicks the X button
-			if (e.type == SDL_WINDOWEVENT)
-			{
-				switch (e.window.event) {
-				case SDL_WINDOWEVENT_MINIMIZED:
-					bStopRender = true;
-					break;
-					
-				case SDL_WINDOWEVENT_RESTORED:
-					bStopRender = false;
-					break;
-				}
-			}
-			if (e.type == SDL_QUIT) bQuit = true;
-			else if (e.type == SDL_KEYDOWN)
-			{
-				switch (e.key.keysym.sym)
-				{
-				case SDLK_SPACE:
-					engine._drawFunky = !engine._drawFunky;
-					break;
-				case SDLK_a:
-					engine.camPos.x += 0.1;
-					break;
-				case SDLK_d:
-					engine.camPos.x -= 0.1;
-					break;
-
-				case SDLK_w:
-					engine.camPos.z += 0.1;
-					break;
-				case SDLK_s:
-					engine.camPos.z -= 0.1;
-					break;
-				}				
-			}
-		}
-
-		if (!bStopRender) {
-
-			engine.draw();
-		}
-	}
-
-	if (engine._isInitialized) {
-
-		//make sure to release the resources of the engine properly if it was initialized well		
-		engine.cleanup();
-	}	
-
-	return 0;
-}
