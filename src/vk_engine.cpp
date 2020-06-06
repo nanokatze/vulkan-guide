@@ -903,32 +903,14 @@ void VulkanEngine::draw() {
 
 		vmaUnmapMemory(_allocator, _worldParameterBuffer._allocation);
 
-		VkDescriptorSetAllocateInfo allocInfo = {};
-		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-		allocInfo.pNext = nullptr;
-
-		allocInfo.pSetLayouts = &_singleUniformSetLayout;
-		allocInfo.descriptorSetCount = 1;
-		allocInfo.descriptorPool = _frameDescriptorPool;
-
-		
+		VkDescriptorSetAllocateInfo allocInfo = vkinit::descriptor_allocate_info(_frameDescriptorPool,&_singleUniformSetLayout);
+			
 		VK_CHECK(vkAllocateDescriptorSets(_device, &allocInfo, &worldSet));
 
-		VkDescriptorBufferInfo objectBufferInfo;
-		objectBufferInfo.buffer = _worldParameterBuffer._buffer;
-		objectBufferInfo.offset = 0;
-		objectBufferInfo.range = sizeof(WorldParameters);
+		VkDescriptorBufferInfo objectBufferInfo = vkinit::descriptor_buffer_info<WorldParameters>(_worldParameterBuffer);
 
-		VkWriteDescriptorSet objectDSwrite = {};
-		objectDSwrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		objectDSwrite.pNext = nullptr;
-
-		objectDSwrite.dstBinding = 0;
-		objectDSwrite.dstSet = worldSet;
-		objectDSwrite.descriptorCount = 1;
-		objectDSwrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		objectDSwrite.pBufferInfo = &objectBufferInfo;
-
+		VkWriteDescriptorSet objectDSwrite = vkinit::descriptor_write_buffer(worldSet,0,&objectBufferInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+		
 		vkUpdateDescriptorSets(_device, 1, &objectDSwrite, 0, nullptr);
 	}
 	
@@ -949,31 +931,14 @@ void VulkanEngine::draw() {
 
 		_monkeyMesh.bind_vertex_buffer(cmd);
 
-		VkDescriptorSetAllocateInfo allocInfo = {};
-		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-		allocInfo.pNext = nullptr;
-
-		allocInfo.pSetLayouts = &_singleUniformSetLayout;
-		allocInfo.descriptorSetCount = 1;
-		allocInfo.descriptorPool = _frameDescriptorPool;
+		VkDescriptorSetAllocateInfo allocInfo = vkinit::descriptor_allocate_info(_frameDescriptorPool, &_singleUniformSetLayout);
 		
 		VkDescriptorSet objectSet;
 		VK_CHECK(vkAllocateDescriptorSets(_device, &allocInfo, &objectSet));
 
-		VkDescriptorBufferInfo objectBufferInfo;
-		objectBufferInfo.buffer = _objectDataBuffer._buffer;
-		objectBufferInfo.offset = 0;
-		objectBufferInfo.range = sizeof(ObjectUniforms);
+		VkDescriptorBufferInfo objectBufferInfo = vkinit::descriptor_buffer_info<ObjectUniforms>(_objectDataBuffer);
 
-		VkWriteDescriptorSet objectDSwrite = {};
-		objectDSwrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-		objectDSwrite.pNext = nullptr;
-
-		objectDSwrite.dstBinding = 0;
-		objectDSwrite.dstSet = objectSet;
-		objectDSwrite.descriptorCount = 1;
-		objectDSwrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		objectDSwrite.pBufferInfo = &objectBufferInfo;
+		VkWriteDescriptorSet objectDSwrite = vkinit::descriptor_write_buffer(objectSet, 0, &objectBufferInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 
 		vkUpdateDescriptorSets(_device, 1, &objectDSwrite, 0, nullptr);
 

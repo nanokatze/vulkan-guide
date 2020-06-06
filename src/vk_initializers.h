@@ -42,5 +42,19 @@ namespace vkinit {
 	VkPipelineDepthStencilStateCreateInfo depth_stencil_create_info(bool bDepthTest, bool bDepthWrite, VkCompareOp compareOp);
 
 	VkImageCreateInfo image_create_info(VkFormat format, VkImageUsageFlags usageFlags, VkExtent3D extent);
+
+	VkDescriptorSetAllocateInfo descriptor_allocate_info(VkDescriptorPool pool, VkDescriptorSetLayout* layout);
+
+	VkWriteDescriptorSet descriptor_write_buffer(VkDescriptorSet dstSet, uint32_t dstBinding , VkDescriptorBufferInfo * pBufferInfo, VkDescriptorType type);
+
+	template<typename T>
+	VkDescriptorBufferInfo descriptor_buffer_info(const AllocatedBuffer &buffer,VkDeviceSize  offset = 0) {
+
+		VkDescriptorBufferInfo bufferInfo;
+		bufferInfo.buffer = buffer._buffer;
+		bufferInfo.offset = offset;
+		bufferInfo.range = sizeof(T);
+		return bufferInfo;
+	}
 }
 

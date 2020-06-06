@@ -252,3 +252,31 @@ VkImageCreateInfo vkinit::image_create_info(VkFormat format, VkImageUsageFlags u
 
 	return info;
 }
+
+VkDescriptorSetAllocateInfo vkinit::descriptor_allocate_info(VkDescriptorPool pool ,VkDescriptorSetLayout *layout)
+{
+	VkDescriptorSetAllocateInfo info = {};
+	info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+	info.pNext = nullptr;
+
+	info.pSetLayouts = layout;
+	info.descriptorSetCount = 1;
+	info.descriptorPool = pool;
+
+	return info;
+}
+
+VkWriteDescriptorSet vkinit::descriptor_write_buffer(VkDescriptorSet dstSet, uint32_t dstBinding,  VkDescriptorBufferInfo* pBufferInfo, VkDescriptorType type)
+{
+	VkWriteDescriptorSet setWrite = {};
+	setWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	setWrite.pNext = nullptr;
+
+	setWrite.dstBinding = dstBinding;
+	setWrite.dstSet = dstSet;
+	setWrite.descriptorCount = 1;
+	setWrite.descriptorType = type;
+	setWrite.pBufferInfo = pBufferInfo;
+
+	return setWrite;
+}
