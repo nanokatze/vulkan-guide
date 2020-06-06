@@ -12,16 +12,8 @@ add_subdirectory(third_party)
 
 set (CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin")
 
+add_subdirectory(src)
 
-
-# Add source to this project's executable.
-add_executable (vulkan_guide "vulkan_guide.cpp" "vulkan_guide.h")
-
-set_property(TARGET vulkan_guide PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:vulkan_guide>")
-
-target_link_libraries(vulkan_guide  vkbootstrap vma glm tinyobjloader imgui)
-
-target_link_libraries(vulkan_guide Vulkan::Vulkan sdl2 )
 
 
 if (${CMAKE_HOST_SYSTEM_PROCESSOR} STREQUAL "AMD64")
