@@ -1,7 +1,4 @@
-﻿//#include "volk.h"
-//#define VK_NO_PROTOTYPES
-
-#include "VkBootstrap.h"
+﻿#include "VkBootstrap.h"
 
 #include "vulkan_guide.h"
 #include <vector>
@@ -272,8 +269,6 @@ namespace vkinit {
 
 		return info;
 	}
-
-	
 }
 
 
@@ -686,7 +681,6 @@ namespace vkutil {
 		pipelineBuilder._shaderStages.push_back(vert_stage_info);
 		pipelineBuilder._shaderStages.push_back(frag_stage_info);
 
-
 		//vertex input controls how to read vertices from vertex buffers. We arent using it yet
 		pipelineBuilder._vertexInputInfo = vkinit::vertex_input_state_create_info();
 		
@@ -841,9 +835,6 @@ void VulkanEngine::init()
 		window_flags
 	);
 	assert(gWindow != nullptr);
-	
-	//Volk needs a pre-initialization before creating the vulkan instance, so that it can load the functions needed to init vulkan
-	//volkInitialize();
 
 	vkb::InstanceBuilder builder;
 
@@ -851,9 +842,6 @@ void VulkanEngine::init()
 	auto inst_ret = builder.set_app_name("Example Vulkan Application")
 		.request_validation_layers(bUseValidationLayers)
 		.use_default_debug_messenger()
-		.add_validation_feature_enable(VK_VALIDATION_FEATURE_ENABLE_DEBUG_PRINTF_EXT)
-		//.add_debug_messenger_severity(VK_DEBUG_UTILS_MESSAGE_SEVERITY_FLAG_BITS_MAX_ENUM_EXT)
-		//.add_debug_messenger_type(VK_DEBUG_UTILS_MESSAGE_TYPE_FLAG_BITS_MAX_ENUM_EXT)
 		.build();
 	
 	vkb::Instance vkb_inst = inst_ret.value();
@@ -862,11 +850,6 @@ void VulkanEngine::init()
 	_instance = vkb_inst.instance;
 	_debugMessenger = vkb_inst.debug_messenger;
 	
-	//now that instance is loaded, use volk to load all the vulkan functions and extensions
-	//volkLoadInstance(_instance);
-
-	
-
 	//request a Vulkan surface from SDL, this is the actual drawable window output
 	
 	if (!SDL_Vulkan_CreateSurface(gWindow, _instance, &_surface)) {
@@ -1023,10 +1006,8 @@ void VulkanEngine::init()
 	VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_renderSemaphore));
 	
 
-	//build the pipeline layout that controls the inputs/outputs of the shader
-	
+	//build the pipeline layout that controls the inputs/outputs of the shader	
 	VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();
-
 
 	//setup push constants
 	VkPushConstantRange push_constant;
@@ -1041,7 +1022,6 @@ void VulkanEngine::init()
 	pipeline_layout_info.pushConstantRangeCount = 1;
 
 	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_trianglePipelineLayout));
-
 	
 	vkutil::create_triangle_pipeline(_device, _windowExtent, _renderPass, _trianglePipelineLayout,
 		"../../shaders/triangle.vert.spv",
@@ -1077,11 +1057,8 @@ void VulkanEngine::init()
 
    VmaAllocationCreateInfo vmaallocInfo = {};
    vmaallocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-   //vmaallocInfo.requiredFlags = VkMemoryPropertyFlags(properties);
-   //vmaallocInfo.flags = vk::MemoryAllocateFlagBits::eDeviceAddress;
-   _monkey;
-   VmaAllocation allocation;
-   
+
+   VmaAllocation allocation;   
    VK_CHECK(vmaCreateBuffer(allocator, &vkbinfo, &vmaallocInfo, &_monkey, &allocation, nullptr));
 
    //copy vertex data
@@ -1097,18 +1074,16 @@ void VulkanEngine::init()
    ImGui::CreateContext();
 
    ImGui_ImplSDL2_InitForVulkan(gWindow);
+
    ImGui_ImplVulkan_InitInfo init_info = {};
    init_info.Instance = _instance;
    init_info.PhysicalDevice = physDevice;
-   init_info.Device = _device;
-   //init_info.QueueFamily = ;
-   init_info.Queue = _graphicsQueue;
-   //init_info.PipelineCache = ;
-   init_info.DescriptorPool = imguiPool;
-   //init_info.Allocator = g_Allocator;
+   init_info.Device = _device;   
+   init_info.Queue = _graphicsQueue;  
+   init_info.DescriptorPool = imguiPool;   
    init_info.MinImageCount = 3;
    init_info.ImageCount = 3;
-   //init_info.CheckVkResultFn = check_vk_result;
+
    ImGui_ImplVulkan_Init(&init_info, _renderPass);
 
 
@@ -1118,26 +1093,16 @@ void VulkanEngine::init()
    //begin the command buffer recording. We will use this command buffer exactly once, so we want to let vulkan know that
    VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 
-   VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
-
+   VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));   
    
-
    ImGui_ImplVulkan_CreateFontsTexture(cmd);
 
-
-   VK_CHECK(vkEndCommandBuffer(cmd));
-
-
-   ImGui_ImplVulkan_DestroyFontUploadObjects();
+   VK_CHECK(vkEndCommandBuffer(cmd));  
 
    VkSubmitInfo submit = vkinit::submit_info(&cmd);
    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
    submit.pWaitDstStageMask = &waitStage;
-
-   submit.waitSemaphoreCount = 0;
-   submit.signalSemaphoreCount = 0;
-  
 
    //submit command buffer to the queue and execute it.
    // _renderFence will now block until the graphic commands finish execution
@@ -1145,6 +1110,7 @@ void VulkanEngine::init()
 
    vkQueueWaitIdle(_graphicsQueue);
 
+   ImGui_ImplVulkan_DestroyFontUploadObjects();
 	//everything went fine
 	_isInitialized = true;
 }
@@ -1322,8 +1288,11 @@ int main(int argc, char* argv[])
 	{		
 		ImGui_ImplVulkan_NewFrame();
 		ImGui_ImplSDL2_NewFrame(gWindow);
+
 		ImGui::NewFrame();
+
 		static bool bShowDemo = true;
+
 		ImGui::ShowDemoWindow(&bShowDemo);	
 
 		ImGui::Render();
@@ -1368,8 +1337,7 @@ int main(int argc, char* argv[])
 				case SDLK_s:
 					engine.camPos.z -= 0.1;
 					break;
-				}
-				
+				}				
 			}
 		}
 
