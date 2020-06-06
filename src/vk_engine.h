@@ -70,7 +70,7 @@ public:
 	uint64_t _frameNumber;
 	bool _isInitialized = false;
 
-	bool _drawFunky = false;
+	bool _drawFunky = true;
 
 	glm::vec3 camPos;
 
@@ -84,6 +84,8 @@ public:
 
 	//draw loop
 	void draw();
+
+	void draw_ui();
 
 	bool upload_mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, Mesh& outMesh);
 

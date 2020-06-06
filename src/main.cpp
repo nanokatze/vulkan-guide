@@ -25,9 +25,11 @@ int main(int argc, char* argv[])
 
 		ImGui::NewFrame();
 
-		static bool bShowDemo = true;
+		engine.draw_ui();
 
-		ImGui::ShowDemoWindow(&bShowDemo);
+		//static bool bShowDemo = true;
+
+		//ImGui::ShowDemoWindow(&bShowDemo);
 
 		ImGui::Render();
 

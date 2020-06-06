@@ -356,8 +356,10 @@ namespace vkutil{
 
 		pipelineBuilder._scissor = scissor;
 
-		//configure the rasterizer to draw filled triangles with normal culling
+		//configure the rasterizer to draw filled triangles 
 		pipelineBuilder._rasterizer = vkinit::rasterization_state_create_info(VK_POLYGON_MODE_FILL);
+		//we want no culling for the triangles
+		pipelineBuilder._rasterizer.cullMode = VK_CULL_MODE_NONE;
 
 		//we dont use multisampling, so just run the default one
 		pipelineBuilder._multisampling = vkinit::multisampling_state_create_info();
@@ -533,7 +535,6 @@ void VulkanEngine::init()
 
 	init_depth_image(selectedDepthFormat);
 
-
 	//build the default render-pass we need to do rendering
 	_renderPass = vkutil::create_render_pass(_device, vkbSwapchain.image_format,selectedDepthFormat);
 
@@ -558,11 +559,11 @@ void VulkanEngine::init()
 	std::vector<Vertex> vertices;
 	std::vector<uint32_t> indices;
 
-   vkutil::load_mesh_from_obj("../../assets/monkey_smooth.obj",vertices,indices);
+	vkutil::load_mesh_from_obj("../../assets/monkey_smooth.obj",vertices,indices);
    
-   upload_mesh(vertices, indices,_monkeyMesh);  
+	upload_mesh(vertices, indices,_monkeyMesh);  
 
-   init_imgui();
+	init_imgui();
 
 	//everything went fine
 	_isInitialized = true;
@@ -609,7 +610,7 @@ void VulkanEngine::init_syncronization_structures()
 		vkDestroyFence(_device, _renderFence, nullptr);
 		vkDestroySemaphore(_device, _renderSemaphore, nullptr);
 		vkDestroySemaphore(_device, _presentSemaphore, nullptr);
-		});
+	});
 }
 
 VkFormat VulkanEngine::select_depth_format()
@@ -734,6 +735,7 @@ void VulkanEngine::init_pipelines()
 	pipeline_layout_info.pPushConstantRanges = &push_constant;
 	pipeline_layout_info.pushConstantRangeCount = 1;
 
+	//create the pipeline layout with a float4 pushconstant on fragshader and nothing else
 	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_trianglePipelineLayout));
 
 	vkutil::create_triangle_pipeline(_device, _windowExtent, _renderPass, _trianglePipelineLayout,
@@ -746,9 +748,11 @@ void VulkanEngine::init_pipelines()
 		"../../shaders/funky_triangle.frag.spv",
 		&_funkTrianglePipeline);
 
+	//change the size of the push constant to fit a mat4 instead of a float4, and be for vertex shader
 	push_constant.size = sizeof(glm::mat4);
 	push_constant.stageFlags = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
+	//create the pipeline layout with a mat4 pushconstant on vertex shader and nothing else
 	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_meshPipelineLayout));
 
 	vkutil::create_mesh_pipeline(_device, _windowExtent, _renderPass, _meshPipelineLayout,
@@ -809,6 +813,8 @@ void VulkanEngine::init_depth_image(VkFormat selectedDepthFormat)
 
 void VulkanEngine::draw() {	
 	
+	
+
 	//wait until the gpu has finished rendering the last frame. Timeout of 1 second
 	VK_CHECK(vkWaitForFences(_device, 1, &_renderFence, true, 1000000000));
 	VK_CHECK(vkResetFences(_device, 1, &_renderFence));
@@ -880,6 +886,7 @@ void VulkanEngine::draw() {
 		//we can now draw
 		vkCmdDraw(cmd, _monkeyMesh._indices.size(), 1, 0, 0);
 	}
+	
 
 	
 	ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
@@ -925,6 +932,15 @@ void VulkanEngine::draw() {
 
 	//increase the number of frames drawn
 	_frameNumber++;
+}
+
+void VulkanEngine::draw_ui()
+{
+	ImGui::Begin("Engine");
+
+	ImGui::InputFloat3("Camera Location", &camPos[0], 3);
+	ImGui::Checkbox("Funky", &_drawFunky);
+	ImGui::End();
 }
 
 bool VulkanEngine::upload_mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, Mesh& outMesh)
