@@ -32,6 +32,16 @@ struct DeletionQueue
 
 extern struct SDL_Window* gWindow;
 
+struct WorldParameters {
+	glm::mat4 cameraMatrix; //viewproj
+	glm::vec4 ambient_color;
+};
+
+struct ObjectUniforms {
+	glm::mat4 modelMatrix;
+	glm::vec4 shine_color;
+};
+
 class VulkanEngine {
 public:
 
@@ -65,12 +75,22 @@ public:
 	VkPipelineLayout _trianglePipelineLayout;
 	VkPipelineLayout _meshPipelineLayout;
 
+	VkDescriptorSetLayout _singleUniformSetLayout;
+
+	VkDescriptorPool _frameDescriptorPool;
+
 	Mesh _monkeyMesh;
+
+	//holds uniform data for world parameters
+	AllocatedBuffer _worldParameterBuffer;
+
+	//holds uniform data for objects
+	AllocatedBuffer _objectDataBuffer;
 
 	uint64_t _frameNumber;
 	bool _isInitialized = false;
 
-	bool _drawFunky = true;
+	bool _drawFunky = false;
 
 	glm::vec3 camPos;
 
@@ -90,6 +110,8 @@ public:
 	bool upload_mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, Mesh& outMesh);
 
 private:
+	
+	void init_uniform_buffers();
 
 	void init_commands(uint32_t graphics_queue_family);
 

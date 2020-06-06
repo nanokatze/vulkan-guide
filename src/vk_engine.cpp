@@ -565,9 +565,19 @@ void VulkanEngine::init()
 
 	init_imgui();
 
+	init_uniform_buffers();
+
+	_frameDescriptorPool = vkutil::create_imgui_descriptor_pool(_device);
+
+	_mainDeletionQueue.push_function([=]() {
+		vkDestroyDescriptorPool(_device, _frameDescriptorPool, nullptr);
+	});
+
 	//everything went fine
 	_isInitialized = true;
 }
+
+
 
 void VulkanEngine::init_commands(uint32_t graphics_queue_family)
 {
@@ -752,6 +762,29 @@ void VulkanEngine::init_pipelines()
 	push_constant.size = sizeof(glm::mat4);
 	push_constant.stageFlags = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
+
+
+	//we need to add the 2 descriptor sets to the layout
+
+	//we have 1 descriptor for uniform binding, on both vertex and fragment shaders
+	VkDescriptorSetLayoutBinding binding = {};
+	binding.binding = 0;
+	binding.descriptorCount = 1;
+	binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+	VkDescriptorSetLayoutCreateInfo layoutCreateInfo = {};
+	layoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+	layoutCreateInfo.pNext = nullptr;
+
+	layoutCreateInfo.pBindings = &binding;
+	layoutCreateInfo.bindingCount = 1;
+
+	VK_CHECK(vkCreateDescriptorSetLayout(_device, &layoutCreateInfo, nullptr, &_singleUniformSetLayout));
+
+	VkDescriptorSetLayout layouts[2] = { _singleUniformSetLayout ,_singleUniformSetLayout };
+	pipeline_layout_info.pSetLayouts = layouts;
+	pipeline_layout_info.setLayoutCount = 2;
 	//create the pipeline layout with a mat4 pushconstant on vertex shader and nothing else
 	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_meshPipelineLayout));
 
@@ -822,6 +855,7 @@ void VulkanEngine::draw() {
 	//now that we are sure that the commands finished executing, we can safely reset the command buffer to begin recording again.
 	VK_CHECK(vkResetCommandBuffer(_mainCommandBuffer, 0));
 	
+	VK_CHECK(vkResetDescriptorPool(_device, _frameDescriptorPool, 0));
 	//request image from the swapchain
 	uint32_t swapchainImageIndex;
 	VK_CHECK( vkAcquireNextImageKHR(_device, _swapchain, 0, _presentSemaphore, nullptr , &swapchainImageIndex));	
@@ -853,6 +887,52 @@ void VulkanEngine::draw() {
 
 	//once we start adding rendering commands, they will go here
 
+	//make a model view matrix for rendering the object
+		//camera view
+	glm::mat4 view = glm::translate(glm::mat4(1.f), camPos);
+	//camera projection
+	glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
+	projection[1][1] *= -1;
+	VkDescriptorSet worldSet;
+	{
+
+		void* dataPtr;
+		vmaMapMemory(_allocator, _worldParameterBuffer._allocation, &dataPtr);
+
+		static_cast<WorldParameters*>(dataPtr)->cameraMatrix = projection * view;
+
+		vmaUnmapMemory(_allocator, _worldParameterBuffer._allocation);
+
+		VkDescriptorSetAllocateInfo allocInfo = {};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.pNext = nullptr;
+
+		allocInfo.pSetLayouts = &_singleUniformSetLayout;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.descriptorPool = _frameDescriptorPool;
+
+		
+		VK_CHECK(vkAllocateDescriptorSets(_device, &allocInfo, &worldSet));
+
+		VkDescriptorBufferInfo objectBufferInfo;
+		objectBufferInfo.buffer = _worldParameterBuffer._buffer;
+		objectBufferInfo.offset = 0;
+		objectBufferInfo.range = sizeof(WorldParameters);
+
+		VkWriteDescriptorSet objectDSwrite = {};
+		objectDSwrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		objectDSwrite.pNext = nullptr;
+
+		objectDSwrite.dstBinding = 0;
+		objectDSwrite.dstSet = worldSet;
+		objectDSwrite.descriptorCount = 1;
+		objectDSwrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		objectDSwrite.pBufferInfo = &objectBufferInfo;
+
+		vkUpdateDescriptorSets(_device, 1, &objectDSwrite, 0, nullptr);
+	}
+	
+
 	if (_drawFunky)
 	{
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _funkTrianglePipeline);
@@ -868,18 +948,51 @@ void VulkanEngine::draw() {
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipeline);
 
 		_monkeyMesh.bind_vertex_buffer(cmd);
+
+		VkDescriptorSetAllocateInfo allocInfo = {};
+		allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		allocInfo.pNext = nullptr;
+
+		allocInfo.pSetLayouts = &_singleUniformSetLayout;
+		allocInfo.descriptorSetCount = 1;
+		allocInfo.descriptorPool = _frameDescriptorPool;
 		
-		//make a model view matrix for rendering the object
-		//camera view
-		glm::mat4 view = glm::translate(glm::mat4(1.f), camPos);		
-		//camera projection
-		glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
-		projection[1][1] *= -1;
+		VkDescriptorSet objectSet;
+		VK_CHECK(vkAllocateDescriptorSets(_device, &allocInfo, &objectSet));
+
+		VkDescriptorBufferInfo objectBufferInfo;
+		objectBufferInfo.buffer = _objectDataBuffer._buffer;
+		objectBufferInfo.offset = 0;
+		objectBufferInfo.range = sizeof(ObjectUniforms);
+
+		VkWriteDescriptorSet objectDSwrite = {};
+		objectDSwrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		objectDSwrite.pNext = nullptr;
+
+		objectDSwrite.dstBinding = 0;
+		objectDSwrite.dstSet = objectSet;
+		objectDSwrite.descriptorCount = 1;
+		objectDSwrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		objectDSwrite.pBufferInfo = &objectBufferInfo;
+
+		vkUpdateDescriptorSets(_device, 1, &objectDSwrite, 0, nullptr);
+
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 0, 1, &worldSet, 0, nullptr);
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 1, 1, &objectSet, 0, nullptr);
+		
+		
+
 		//model rotation
 		glm::mat4 model = glm::rotate(glm::mat4{ 0.1f }, glm::radians(_frameNumber * 0.4f), glm::vec3(0, 1, 0));
 
-		glm::mat4 mesh_matrix = projection* view * model;
+		glm::mat4 mesh_matrix = /*projection* view * */model;
 
+		void* dataPtr;
+		vmaMapMemory(_allocator, _objectDataBuffer._allocation, &dataPtr);
+
+		static_cast<ObjectUniforms*>(dataPtr)->modelMatrix = mesh_matrix;
+
+		vmaUnmapMemory(_allocator,_objectDataBuffer._allocation);
 		//upload the mesh to the gpu via pushconstants
 		vkCmdPushConstants(cmd, _meshPipelineLayout, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, sizeof(glm::mat4), &mesh_matrix);
 
@@ -978,6 +1091,39 @@ bool VulkanEngine::upload_mesh(const std::vector<Vertex>& vertices, const std::v
 	vmaUnmapMemory(_allocator, outMesh._vertexBuffer._allocation);
 
 	return true;
+}
+
+void VulkanEngine::init_uniform_buffers()
+{
+	//buffer that can hold a single WorldPameters
+	VkBufferCreateInfo worldBufferInfo = {};
+	worldBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	worldBufferInfo.size = sizeof(WorldParameters);
+	worldBufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+	worldBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+	//buffer that can hold a single ObjectUniforms
+	VkBufferCreateInfo objectBufferInfo = {};
+	objectBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	objectBufferInfo.size = sizeof(ObjectUniforms);
+	objectBufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+	objectBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	
+
+	VmaAllocationCreateInfo vmaallocInfo = {};
+	vmaallocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+
+	VK_CHECK(vmaCreateBuffer(_allocator, &worldBufferInfo, &vmaallocInfo, &_worldParameterBuffer._buffer, &_worldParameterBuffer._allocation, nullptr));
+
+	VK_CHECK(vmaCreateBuffer(_allocator, &objectBufferInfo, &vmaallocInfo, &_objectDataBuffer._buffer, &_objectDataBuffer._allocation, nullptr));
+
+
+	//queue the deletion of the 2 buffers
+	_mainDeletionQueue.push_function([=]() {
+
+		vmaDestroyBuffer(_allocator, _objectDataBuffer._buffer, _objectDataBuffer._allocation);
+		vmaDestroyBuffer(_allocator, _worldParameterBuffer._buffer, _worldParameterBuffer._allocation);
+	});	
 }
 
 void VulkanEngine::cleanup()

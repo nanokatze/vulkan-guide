@@ -27,10 +27,6 @@ int main(int argc, char* argv[])
 
 		engine.draw_ui();
 
-		//static bool bShowDemo = true;
-
-		//ImGui::ShowDemoWindow(&bShowDemo);
-
 		ImGui::Render();
 
 		//Handle events on queue
