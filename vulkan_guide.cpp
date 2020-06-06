@@ -4,6 +4,8 @@
 #include <vector>
 #include <array>
 #include <fstream>
+#include <functional>
+#include <deque>
 
 #include <SDL.h>
 #include <SDL_vulkan.h>
@@ -766,7 +768,22 @@ namespace vkutil {
 	
 }
 
+struct DeletionQueue
+{
+	std::deque<std::function<void()>> deletors;
 
+	
+	void push_function(std::function<void()>&& function) {
+		deletors.push_back(function);
+	}
+
+	void flush() {
+		// reverse iterate the deletion queue to execute all the functions
+		for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
+			(*it)(); //call functors
+		}
+	}
+};
 class VulkanEngine {
 public:
 
@@ -807,6 +824,8 @@ public:
 	bool _drawFunky = false;
 
 	glm::vec3 camPos;
+
+	DeletionQueue _mainDeletionQueue;
 
 	void init();
 	void cleanup();
@@ -850,12 +869,18 @@ void VulkanEngine::init()
 	_instance = vkb_inst.instance;
 	_debugMessenger = vkb_inst.debug_messenger;
 	
+	
+
 	//request a Vulkan surface from SDL, this is the actual drawable window output
 	
 	if (!SDL_Vulkan_CreateSurface(gWindow, _instance, &_surface)) {
 		throw std::runtime_error("Failed to create surface");
 		// failed to create a surface!
 	}
+
+	_mainDeletionQueue.push_function([=]() {
+		//vkDestroySurfaceKHR(_instance, _surface, nullptr);
+	});
 
 	//use vkbootstrap to select a gpu. 
 	//We want a gpu that can write to the SDL surface and supports vulkan 1.2
@@ -875,6 +900,12 @@ void VulkanEngine::init()
 
 	// Get the VkDevice handle used in the rest of a vulkan application
 	_device = vkbDevice.device;
+
+	//add the destruction of device and instance to the queue
+	_mainDeletionQueue.push_function([=]() {
+		vkDestroyDevice(_device, nullptr);
+		vkDestroyInstance(_instance, nullptr);
+	});
 
 	//now we begin to create the swapchain. We are going to use the lib so it configures everything for us
 	//we want a swapchain with the same size as the SDL window surface, and with default optimal formats
@@ -897,11 +928,20 @@ void VulkanEngine::init()
 	allocatorInfo.instance = _instance;
 	vmaCreateAllocator(&allocatorInfo, &allocator);
 
+	//add the destruction of allocator
+	_mainDeletionQueue.push_function([=]() {
+		vmaDestroyAllocator(allocator);
+	});
 
 	//store swapchain and its related images
 	_swapchain = vkbSwapchain.swapchain;
 	_swapchainImages = vkbSwapchain.get_images().value();
 	_swapchainImageViews= vkbSwapchain.get_image_views().value();
+
+	//add the destruction of swapchain
+	_mainDeletionQueue.push_function([=]() {
+		vkDestroySwapchainKHR(_device, _swapchain, nullptr);
+	});
 
 	//find a depth-buffer format to use
 	VkFormat formats[] = {
@@ -938,7 +978,6 @@ void VulkanEngine::init()
 	
 	//allocate and create the image
 	vmaCreateImage(allocator, &dimg_info, &dimg_allocinfo, &_depthImage.image, &_depthImage.allocation, nullptr);
-	
 
 	//build a image-view for the depth image to use for rendering
 	VkImageViewCreateInfo dview_info = {};
@@ -953,12 +992,20 @@ void VulkanEngine::init()
 	dview_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
 
 	
+	
 	VK_CHECK(vkCreateImageView(_device, &dview_info, nullptr, &_depthImageView));
 
+	_mainDeletionQueue.push_function([=]() {
+		vmaDestroyImage(allocator, _depthImage.image, _depthImage.allocation);
+		vkDestroyImageView(_device, _depthImageView, nullptr);
+	});
 
 	//build the default render-pass we need to do rendering
 	_renderPass = vkutil::create_render_pass(_device, vkbSwapchain.image_format,selectedDepthFormat);
 
+	_mainDeletionQueue.push_function([=]() {
+		vkDestroyRenderPass(_device, _renderPass, nullptr);
+	});
 
 	//create the framebuffers for the swapchain images. This will connect the render-pass to the images for rendering
 	VkFramebufferCreateInfo fb_info = vkinit::framebuffer_create_info(_renderPass,_windowExtent);
@@ -976,8 +1023,20 @@ void VulkanEngine::init()
 		VK_CHECK( vkCreateFramebuffer(_device, &fb_info, nullptr, &_framebuffers[i]));		
 	}
 
+	//add the destruction of framebuffers
+	_mainDeletionQueue.push_function([=]() {	
+
+		//destroy swapchain resources
+		for (int i = 0; i < _framebuffers.size(); i++) {
+			vkDestroyFramebuffer(_device, _framebuffers[i], nullptr);
+
+			vkDestroyImageView(_device, _swapchainImageViews[i], nullptr);
+		}
+	});
+
 	// use vkbootstrap to get a Graphics queue
 	_graphicsQueue = vkbDevice.get_queue(vkb::QueueType::graphics).value();
+
 
 	uint32_t graphics_queue_family = vkbDevice.get_queue_index(vkb::QueueType::graphics).value();
 
@@ -992,11 +1051,17 @@ void VulkanEngine::init()
 
 	VK_CHECK(vkAllocateCommandBuffers(_device, &cmdAllocInfo, &_mainCommandBuffer));
 
+	//add the destruction of command pool. Queue and buffers dont have to get deleted
+	_mainDeletionQueue.push_function([=]() {	
+
+		vkDestroyCommandPool(_device, _commandPool, nullptr);
+	});
+
 	//create syncronization structures
 	//one fence to control when the gpu has finished rendering the frame,
 	//and 2 semaphores to syncronize rendering with swapchain
 	//we want the fence to start signalled so we can wait on it on the first frame
-	VkFenceCreateInfo fenceCreateInfo = vkinit::fence_create_info(VK_FENCE_CREATE_SIGNALED_BIT);
+	VkFenceCreateInfo fenceCreateInfo = vkinit::fence_create_info();
 
 	VK_CHECK(vkCreateFence(_device, &fenceCreateInfo, nullptr, &_renderFence));
 
@@ -1005,6 +1070,13 @@ void VulkanEngine::init()
 	VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_presentSemaphore));
 	VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_renderSemaphore));
 	
+	//add the destruction of sync primitives
+	_mainDeletionQueue.push_function([=]() {
+
+		vkDestroyFence(_device, _renderFence, nullptr);
+		vkDestroySemaphore(_device, _renderSemaphore, nullptr);
+		vkDestroySemaphore(_device, _presentSemaphore, nullptr);
+	});
 
 	//build the pipeline layout that controls the inputs/outputs of the shader	
 	VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();
@@ -1043,6 +1115,16 @@ void VulkanEngine::init()
 		"../../shaders/mesh.frag.spv",
 		&_meshPipeline);
 
+	//add the destruction of pipelines and layouts
+	_mainDeletionQueue.push_function([=]() {
+		
+		vkDestroyPipeline(_device, _trianglePipeline, nullptr);
+		vkDestroyPipeline(_device, _funkTrianglePipeline, nullptr);
+		vkDestroyPipeline(_device, _meshPipeline, nullptr);
+
+		vkDestroyPipelineLayout(_device, _trianglePipelineLayout, nullptr);
+		vkDestroyPipelineLayout(_device, _meshPipelineLayout, nullptr);
+	});
 	
    monkey = vkutil::load_mesh_from_obj("../../assets/monkey_smooth.obj");
 
@@ -1060,6 +1142,12 @@ void VulkanEngine::init()
 
    VmaAllocation allocation;   
    VK_CHECK(vmaCreateBuffer(allocator, &vkbinfo, &vmaallocInfo, &_monkey, &allocation, nullptr));
+
+   //add the destruction of mesh buffer
+   _mainDeletionQueue.push_function([=]() {
+	
+	   vmaDestroyBuffer(allocator, _monkey, allocation);
+	});
 
    //copy vertex data
    void* data;
@@ -1086,6 +1174,12 @@ void VulkanEngine::init()
 
    ImGui_ImplVulkan_Init(&init_info, _renderPass);
 
+   //add the destruction of mesh buffer
+   _mainDeletionQueue.push_function([=]() {
+
+	   vkDestroyDescriptorPool(_device, imguiPool, nullptr);
+	   ImGui_ImplVulkan_Shutdown();
+   });
 
    //naming it cmd for shorter writing
    VkCommandBuffer cmd = _mainCommandBuffer;
@@ -1108,8 +1202,9 @@ void VulkanEngine::init()
    // _renderFence will now block until the graphic commands finish execution
    VK_CHECK(vkQueueSubmit(_graphicsQueue, 1, &submit, _renderFence));
 
-   vkQueueWaitIdle(_graphicsQueue);
-
+   //wait until the gpu has finished uploading
+   VK_CHECK(vkWaitForFences(_device, 1, &_renderFence, true, 1000000000));
+  
    ImGui_ImplVulkan_DestroyFontUploadObjects();
 	//everything went fine
 	_isInitialized = true;
@@ -1240,35 +1335,9 @@ void VulkanEngine::cleanup()
 	//make sure the gpu has stopped doing its things
 	vkWaitForFences(_device, 1, &_renderFence, true, 999999999);
 
-	vkDestroyCommandPool(_device, _commandPool, nullptr);
 
-	//destroy the pipeline and its layout
-	vkDestroyPipeline(_device, _trianglePipeline, nullptr);
-	vkDestroyPipelineLayout(_device, _trianglePipelineLayout, nullptr);
-
-	//destroy sync objects
-	vkDestroyFence(_device, _renderFence, nullptr);
-	vkDestroySemaphore(_device, _renderSemaphore, nullptr);
-	vkDestroySemaphore(_device, _presentSemaphore, nullptr);
 	
-	vkDestroySwapchainKHR(_device, _swapchain, nullptr);
-
-	vkDestroyRenderPass(_device, _renderPass, nullptr);
-	
-	//destroy swapchain resources
-	for (int i = 0; i < _framebuffers.size(); i++) {
-		vkDestroyFramebuffer(_device, _framebuffers[i], nullptr);
-
-		vkDestroyImageView(_device, _swapchainImageViews[i], nullptr);
-	}
-
-	vkDestroySurfaceKHR(_instance, _surface, nullptr);
-
-	//destroy debug utils
-	//vkDestroyDebugUtilsMessengerEXT(_instance, _debugMessenger, nullptr);
-
-	vkDestroyDevice(_device, nullptr);
-	vkDestroyInstance(_instance,nullptr);	
+	_mainDeletionQueue.flush();
 	
 	SDL_DestroyWindow(gWindow);
 }
