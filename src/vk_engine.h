@@ -32,12 +32,12 @@ struct DeletionQueue
 
 extern struct SDL_Window* gWindow;
 
-struct WorldParameters {
+struct alignas(256) WorldParameters{
 	glm::mat4 cameraMatrix; //viewproj
 	glm::vec4 ambient_color;
 };
 
-struct ObjectUniforms {
+struct alignas(256) ObjectUniforms {
 	glm::mat4 modelMatrix;
 	glm::vec4 shine_color;
 };
@@ -76,6 +76,7 @@ public:
 	VkPipelineLayout _meshPipelineLayout;
 
 	VkDescriptorSetLayout _singleUniformSetLayout;
+	VkDescriptorSetLayout _singleUniformDynamicSetLayout;
 
 	VkDescriptorPool _frameDescriptorPool;
 
@@ -86,6 +87,11 @@ public:
 
 	//holds uniform data for objects
 	AllocatedBuffer _objectDataBuffer;
+
+	const uint32_t max_monkeys = 20;
+	int _numMonkeys = 5;
+
+	std::vector<ObjectUniforms> _meshUniforms;
 
 	uint64_t _frameNumber;
 	bool _isInitialized = false;
@@ -115,7 +121,7 @@ private:
 
 	void init_commands(uint32_t graphics_queue_family);
 
-	void init_syncronization_structures();
+	void init_sync_structures();
 
 	VkFormat select_depth_format();
 

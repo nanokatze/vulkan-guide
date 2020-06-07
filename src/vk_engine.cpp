@@ -408,7 +408,7 @@ namespace vkutil{
 		pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
 		pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
 		pool_info.maxSets = 1000;
-		pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(pool_sizes);
+		pool_info.poolSizeCount = std::size(pool_sizes);
 		pool_info.pPoolSizes = pool_sizes;
 
 		VkDescriptorPool pool;
@@ -552,7 +552,7 @@ void VulkanEngine::init()
 
 	init_commands(graphics_queue_family);
 
-	init_syncronization_structures();
+	init_sync_structures();
 
 	init_pipelines();	
 
@@ -599,9 +599,9 @@ void VulkanEngine::init_commands(uint32_t graphics_queue_family)
 	});
 }
 
-void VulkanEngine::init_syncronization_structures()
+void VulkanEngine::init_sync_structures()
 {
-	//create syncronization structures
+	//create synchronization structures
 	//one fence to control when the gpu has finished rendering the frame,
 	//and 2 semaphores to syncronize rendering with swapchain
 	//we want the fence to start signalled so we can wait on it on the first frame
@@ -758,9 +758,6 @@ void VulkanEngine::init_pipelines()
 		"../../shaders/funky_triangle.frag.spv",
 		&_funkTrianglePipeline);
 
-	//change the size of the push constant to fit a mat4 instead of a float4, and be for vertex shader
-	push_constant.size = sizeof(glm::mat4);
-	push_constant.stageFlags = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
 
 
@@ -773,6 +770,7 @@ void VulkanEngine::init_pipelines()
 	binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
+	//create a set layout that has exactly 1 binding of type uniform-buffer
 	VkDescriptorSetLayoutCreateInfo layoutCreateInfo = {};
 	layoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
 	layoutCreateInfo.pNext = nullptr;
@@ -782,10 +780,20 @@ void VulkanEngine::init_pipelines()
 
 	VK_CHECK(vkCreateDescriptorSetLayout(_device, &layoutCreateInfo, nullptr, &_singleUniformSetLayout));
 
-	VkDescriptorSetLayout layouts[2] = { _singleUniformSetLayout ,_singleUniformSetLayout };
+	binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+	VK_CHECK(vkCreateDescriptorSetLayout(_device, &layoutCreateInfo, nullptr, &_singleUniformDynamicSetLayout));
+
+	//because the layout is the same on the 2 sets (single uniform buffer), we can use the same set-layout for both sets
+	VkDescriptorSetLayout layouts[2] = { _singleUniformSetLayout ,_singleUniformDynamicSetLayout };
 	pipeline_layout_info.pSetLayouts = layouts;
 	pipeline_layout_info.setLayoutCount = 2;
-	//create the pipeline layout with a mat4 pushconstant on vertex shader and nothing else
+
+	//change the size of the push constant to fit a mat4 instead of a float4, and be for vertex shader
+	push_constant.size = sizeof(glm::mat4);
+	push_constant.stageFlags = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
+
+
+	//create the pipeline layout with a mat4 pushconstant on vertex shader and the 2 descriptor sets
 	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_meshPipelineLayout));
 
 	vkutil::create_mesh_pipeline(_device, _windowExtent, _renderPass, _meshPipelineLayout,
@@ -802,6 +810,9 @@ void VulkanEngine::init_pipelines()
 
 		vkDestroyPipelineLayout(_device, _trianglePipelineLayout, nullptr);
 		vkDestroyPipelineLayout(_device, _meshPipelineLayout, nullptr);
+
+		vkDestroyDescriptorSetLayout(_device, _singleUniformSetLayout, nullptr);
+		vkDestroyDescriptorSetLayout(_device, _singleUniformDynamicSetLayout, nullptr);
 	});
 }
 
@@ -926,43 +937,51 @@ void VulkanEngine::draw() {
 		vkCmdDraw(cmd, 3, 1, 0, 0);
 	}
 	else {
+		void* dataPtr;
+		vmaMapMemory(_allocator, _objectDataBuffer._allocation, &dataPtr);
+		ObjectUniforms* dataArray = static_cast<ObjectUniforms*>(dataPtr);
+		for (int i = 0; i < _numMonkeys; i++)
+		{
+			//model rotation
+			glm::mat4 model = glm::rotate(glm::mat4{ 0.1f }, glm::radians(_frameNumber * 0.4f), glm::vec3(0, 1, 0));
+			glm::mat4 translation = glm::translate(glm::mat4{ 1.f }, glm::vec3(0.5 * i, 0, 0.5));
+			glm::mat4 mesh_matrix = translation * model;
+
+			dataArray[i].modelMatrix = mesh_matrix;			
+		}
+		vmaUnmapMemory(_allocator, _objectDataBuffer._allocation);
+
+
 
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipeline);
 
 		_monkeyMesh.bind_vertex_buffer(cmd);
 
-		VkDescriptorSetAllocateInfo allocInfo = vkinit::descriptor_allocate_info(_frameDescriptorPool, &_singleUniformSetLayout);
+		VkDescriptorSetAllocateInfo allocInfo = vkinit::descriptor_allocate_info(_frameDescriptorPool, &_singleUniformDynamicSetLayout);
 		
 		VkDescriptorSet objectSet;
 		VK_CHECK(vkAllocateDescriptorSets(_device, &allocInfo, &objectSet));
 
 		VkDescriptorBufferInfo objectBufferInfo = vkinit::descriptor_buffer_info<ObjectUniforms>(_objectDataBuffer);
 
-		VkWriteDescriptorSet objectDSwrite = vkinit::descriptor_write_buffer(objectSet, 0, &objectBufferInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+		VkWriteDescriptorSet objectDSwrite = vkinit::descriptor_write_buffer(objectSet, 0, &objectBufferInfo, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC);
 
 		vkUpdateDescriptorSets(_device, 1, &objectDSwrite, 0, nullptr);
 
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 0, 1, &worldSet, 0, nullptr);
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 1, 1, &objectSet, 0, nullptr);
 		
 		
+		
+		
+		for (int i = 0; i < _numMonkeys; i++)
+		{
+			uint32_t dynamicOffset = sizeof(ObjectUniforms) * i;
+	
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 1, 1, &objectSet, 1, &dynamicOffset);
 
-		//model rotation
-		glm::mat4 model = glm::rotate(glm::mat4{ 0.1f }, glm::radians(_frameNumber * 0.4f), glm::vec3(0, 1, 0));
-
-		glm::mat4 mesh_matrix = /*projection* view * */model;
-
-		void* dataPtr;
-		vmaMapMemory(_allocator, _objectDataBuffer._allocation, &dataPtr);
-
-		static_cast<ObjectUniforms*>(dataPtr)->modelMatrix = mesh_matrix;
-
-		vmaUnmapMemory(_allocator,_objectDataBuffer._allocation);
-		//upload the mesh to the gpu via pushconstants
-		vkCmdPushConstants(cmd, _meshPipelineLayout, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, sizeof(glm::mat4), &mesh_matrix);
-
-		//we can now draw
-		vkCmdDraw(cmd, _monkeyMesh._indices.size(), 1, 0, 0);
+			//we can now draw
+			vkCmdDraw(cmd, _monkeyMesh._indices.size(), 1, 0, 0);
+		}		
 	}
 	
 
@@ -1018,6 +1037,7 @@ void VulkanEngine::draw_ui()
 
 	ImGui::InputFloat3("Camera Location", &camPos[0], 3);
 	ImGui::Checkbox("Funky", &_drawFunky);
+	ImGui::SliderInt("Number of Monkeys", &_numMonkeys, 1, max_monkeys);
 	ImGui::End();
 }
 
@@ -1067,10 +1087,10 @@ void VulkanEngine::init_uniform_buffers()
 	worldBufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 	worldBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-	//buffer that can hold a single ObjectUniforms
+	//buffer that can hold MaxMonkeys object uniform. This way we have storage for a bunch of monkeys
 	VkBufferCreateInfo objectBufferInfo = {};
 	objectBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-	objectBufferInfo.size = sizeof(ObjectUniforms);
+	objectBufferInfo.size = sizeof(ObjectUniforms) * max_monkeys;
 	objectBufferInfo.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 	objectBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	
@@ -1093,11 +1113,13 @@ void VulkanEngine::init_uniform_buffers()
 
 void VulkanEngine::cleanup()
 {	
-	//make sure the gpu has stopped doing its things
-	vkWaitForFences(_device, 1, &_renderFence, true, 999999999);
-	
-	_mainDeletionQueue.flush();
-	
-	SDL_DestroyWindow(gWindow);
+	if (_isInitialized) {
+		//make sure the gpu has stopped doing its things
+		vkWaitForFences(_device, 1, &_renderFence, true, 999999999);
+
+		_mainDeletionQueue.flush();
+
+		SDL_DestroyWindow(gWindow);
+	}
 }
 

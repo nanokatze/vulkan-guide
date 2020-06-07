@@ -79,11 +79,10 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	if (engine._isInitialized) {
+	
 
-		//make sure to release the resources of the engine properly if it was initialized well		
-		engine.cleanup();
-	}
+	//make sure to release the resources of the engine properly if it was initialized well		
+	engine.cleanup();	
 
 	return 0;
 }
