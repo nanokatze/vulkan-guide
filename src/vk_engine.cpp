@@ -23,6 +23,7 @@
 #include <vk_types.h>
 #include <vk_mesh.h>
 #include <vk_initializers.h>
+#include <vk_textures.h>
 
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
@@ -570,6 +571,8 @@ void VulkanEngine::init()
 
 	upload_mesh(vertices, indices, _empireMesh);
 
+	init_texture_resources();
+
 	init_imgui();
 
 	init_uniform_buffers();
@@ -597,7 +600,9 @@ void VulkanEngine::init_commands(uint32_t graphics_queue_family)
 	//allocate the default command buffer that we will use for rendering
 	VkCommandBufferAllocateInfo cmdAllocInfo = vkinit::command_buffer_allocate_info(_commandPool, 1);
 
-	VK_CHECK(vkAllocateCommandBuffers(_device, &cmdAllocInfo, &_mainCommandBuffer));
+	VK_CHECK(vkAllocateCommandBuffers(_device, &cmdAllocInfo, &_frameCommandBuffer));
+
+	VK_CHECK(vkAllocateCommandBuffers(_device, &cmdAllocInfo, &_immediateCommandBuffer));
 
 	//add the destruction of command pool. Queue and buffers dont have to get deleted
 	_mainDeletionQueue.push_function([=]() {
@@ -612,7 +617,7 @@ void VulkanEngine::init_sync_structures()
 	//one fence to control when the gpu has finished rendering the frame,
 	//and 2 semaphores to syncronize rendering with swapchain
 	//we want the fence to start signalled so we can wait on it on the first frame
-	VkFenceCreateInfo fenceCreateInfo = vkinit::fence_create_info();
+	VkFenceCreateInfo fenceCreateInfo = vkinit::fence_create_info(VK_FENCE_CREATE_SIGNALED_BIT);
 
 	VK_CHECK(vkCreateFence(_device, &fenceCreateInfo, nullptr, &_renderFence));
 
@@ -625,6 +630,7 @@ void VulkanEngine::init_sync_structures()
 	_mainDeletionQueue.push_function([=]() {
 
 		vkDestroyFence(_device, _renderFence, nullptr);
+
 		vkDestroySemaphore(_device, _renderSemaphore, nullptr);
 		vkDestroySemaphore(_device, _presentSemaphore, nullptr);
 	});
@@ -678,8 +684,10 @@ void VulkanEngine::init_imgui()
 		ImGui_ImplVulkan_Shutdown();
 		});
 
+#if 0
+
 	//naming it cmd for shorter writing
-	VkCommandBuffer cmd = _mainCommandBuffer;
+	VkCommandBuffer cmd = _frameCommandBuffer;
 
 	//begin the command buffer recording. We will use this command buffer exactly once, so we want to let vulkan know that
 	VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
@@ -702,7 +710,40 @@ void VulkanEngine::init_imgui()
 	//wait until the gpu has finished uploading
 	VK_CHECK(vkWaitForFences(_device, 1, &_renderFence, true, 1000000000));
 
+#endif
+
+	execute_immediate_command([](VkCommandBuffer cmd) {
+
+		ImGui_ImplVulkan_CreateFontsTexture(cmd);
+
+	});
+
 	ImGui_ImplVulkan_DestroyFontUploadObjects();
+}
+
+void VulkanEngine::execute_immediate_command(std::function<void(VkCommandBuffer)> function)
+{	
+	//begin the command buffer recording. We will use this command buffer exactly once, so we want to let vulkan know that
+	VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+	VK_CHECK(vkBeginCommandBuffer(_immediateCommandBuffer, &cmdBeginInfo));
+
+	function(_immediateCommandBuffer);
+
+	VK_CHECK(vkEndCommandBuffer(_immediateCommandBuffer));
+
+	VkSubmitInfo submit = vkinit::submit_info(&_immediateCommandBuffer);
+	VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+
+	submit.pWaitDstStageMask = &waitStage;
+
+	//submit command buffer to the queue and execute it.
+	// _renderFence will now block until the graphic commands finish execution
+	VK_CHECK(vkQueueSubmit(_graphicsQueue, 1, &submit, VK_NULL_HANDLE));
+
+	VK_CHECK(vkQueueWaitIdle(_graphicsQueue));
+
+	VK_CHECK(vkResetCommandBuffer(_immediateCommandBuffer, 0));
 }
 
 void VulkanEngine::init_framebuffers(int swapchain_imagecount)
@@ -790,8 +831,11 @@ void VulkanEngine::init_pipelines()
 	binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
 	VK_CHECK(vkCreateDescriptorSetLayout(_device, &layoutCreateInfo, nullptr, &_singleUniformDynamicSetLayout));
 
+	binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+	VK_CHECK(vkCreateDescriptorSetLayout(_device, &layoutCreateInfo, nullptr, &_singleTextureLayout));
+
 	//because the layout is the same on the 2 sets (single uniform buffer), we can use the same set-layout for both sets
-	VkDescriptorSetLayout layouts[2] = { _singleUniformSetLayout ,_singleUniformDynamicSetLayout };
+	VkDescriptorSetLayout layouts[3] = { _singleUniformSetLayout ,_singleUniformDynamicSetLayout,_singleTextureLayout };
 	pipeline_layout_info.pSetLayouts = layouts;
 	pipeline_layout_info.setLayoutCount = 2;
 
@@ -803,10 +847,18 @@ void VulkanEngine::init_pipelines()
 	//create the pipeline layout with a mat4 pushconstant on vertex shader and the 2 descriptor sets
 	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_meshPipelineLayout));
 
+	pipeline_layout_info.setLayoutCount = 3;
+	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_texturedMeshPipelineLayout));
+
 	vkutil::create_mesh_pipeline(_device, _windowExtent, _renderPass, _meshPipelineLayout,
 		"../../shaders/mesh.vert.spv",
 		"../../shaders/mesh.frag.spv",
 		&_meshPipeline);
+
+	vkutil::create_mesh_pipeline(_device, _windowExtent, _renderPass, _texturedMeshPipelineLayout,
+		"../../shaders/mesh.vert.spv",
+		"../../shaders/mesh_textured.frag.spv",
+		&_texturedMeshPipeline);
 
 	//add the destruction of pipelines and their layouts
 	_mainDeletionQueue.push_function([=]() {
@@ -862,16 +914,43 @@ void VulkanEngine::init_depth_image(VkFormat selectedDepthFormat)
 	});
 }
 
+void VulkanEngine::init_texture_resources()
+{
+	vkutil::load_texture_from_file(*this, "../../assets/lost_empire-RGBA.png", _empireTexture);
+
+	//build a image-view for the depth image to use for rendering
+	VkImageViewCreateInfo dview_info = {};
+	dview_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	dview_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	dview_info.image = _empireTexture._image;
+	dview_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+	dview_info.subresourceRange.baseMipLevel = 0;
+	dview_info.subresourceRange.levelCount = 1;
+	dview_info.subresourceRange.baseArrayLayer = 0;
+	dview_info.subresourceRange.layerCount = 1;
+	dview_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+	VK_CHECK(vkCreateImageView(_device, &dview_info, nullptr, &_empireTexImageView));
+
+	VkSamplerCreateInfo samplerInfo = {};
+	samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+	samplerInfo.magFilter = VK_FILTER_LINEAR;
+	samplerInfo.minFilter = VK_FILTER_LINEAR;
+	samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+	samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+	samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+	VK_CHECK(vkCreateSampler(_device, &samplerInfo, nullptr, &_empireTexSampler));
+}
+
 void VulkanEngine::draw() {	
-	
-	
 
 	//wait until the gpu has finished rendering the last frame. Timeout of 1 second
 	VK_CHECK(vkWaitForFences(_device, 1, &_renderFence, true, 1000000000));
 	VK_CHECK(vkResetFences(_device, 1, &_renderFence));
 
 	//now that we are sure that the commands finished executing, we can safely reset the command buffer to begin recording again.
-	VK_CHECK(vkResetCommandBuffer(_mainCommandBuffer, 0));
+	VK_CHECK(vkResetCommandBuffer(_frameCommandBuffer, 0));
 	
 	VK_CHECK(vkResetDescriptorPool(_device, _frameDescriptorPool, 0));
 	//request image from the swapchain
@@ -879,7 +958,7 @@ void VulkanEngine::draw() {
 	VK_CHECK( vkAcquireNextImageKHR(_device, _swapchain, 0, _presentSemaphore, nullptr , &swapchainImageIndex));	
 	
 	//naming it cmd for shorter writing
-	VkCommandBuffer cmd = _mainCommandBuffer;
+	VkCommandBuffer cmd = _frameCommandBuffer;
 
 	//begin the command buffer recording. We will use this command buffer exactly once, so we want to let vulkan know that
 	VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
@@ -960,7 +1039,7 @@ void VulkanEngine::draw() {
 			glm::mat4 translation = glm::translate(glm::mat4{ 1.f }, glm::vec3(0.5 * i, 0, 0.5));
 			glm::mat4 mesh_matrix = translation * model;
 
-			dataArray[i].modelMatrix = mesh_matrix;			
+			dataArray[i].modelMatrix = mesh_matrix;
 		}
 		vmaUnmapMemory(_allocator, _objectDataBuffer._allocation);
 
@@ -971,7 +1050,7 @@ void VulkanEngine::draw() {
 		_monkeyMesh.bind_vertex_buffer(cmd);
 
 		VkDescriptorSetAllocateInfo allocInfo = vkinit::descriptor_allocate_info(_frameDescriptorPool, &_singleUniformDynamicSetLayout);
-		
+
 		VkDescriptorSet objectSet;
 		VK_CHECK(vkAllocateDescriptorSets(_device, &allocInfo, &objectSet));
 
@@ -981,12 +1060,12 @@ void VulkanEngine::draw() {
 
 		vkUpdateDescriptorSets(_device, 1, &objectDSwrite, 0, nullptr);
 
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 0, 1, &worldSet, 0, nullptr);		
-		
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 0, 1, &worldSet, 0, nullptr);
+
 		for (int i = 0; i < _numMonkeys; i++)
 		{
 			uint32_t dynamicOffset = sizeof(ObjectUniforms) * i;
-	
+
 			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 1, 1, &objectSet, 1, &dynamicOffset);
 
 			//we can now draw
@@ -994,10 +1073,28 @@ void VulkanEngine::draw() {
 		}
 
 		_empireMesh.bind_vertex_buffer(cmd);
+		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _texturedMeshPipeline);
+
+		allocInfo = vkinit::descriptor_allocate_info(_frameDescriptorPool, &_singleTextureLayout);
+
+		VkDescriptorSet imageSet;
+		VK_CHECK(vkAllocateDescriptorSets(_device, &allocInfo, &imageSet));
+
+		VkDescriptorImageInfo descriptorImageInfo = {};
+		descriptorImageInfo.sampler = _empireTexSampler;
+		descriptorImageInfo.imageView =_empireTexImageView;
+		descriptorImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+		VkWriteDescriptorSet imageDsWrite = vkinit::descriptor_write_image(imageSet, 0, &descriptorImageInfo, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+
+		vkUpdateDescriptorSets(_device, 1, &imageDsWrite, 0, nullptr);
+
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _texturedMeshPipelineLayout, 2 , 1, &imageSet, 0, nullptr);
+
 
 		//draw the big mesh
 		uint32_t dynamicOffset = 0;
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 1, 1, &objectSet, 1, &dynamicOffset);
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _texturedMeshPipelineLayout, 1, 1, &objectSet, 1, &dynamicOffset);
 
 		//we can now draw
 		vkCmdDraw(cmd, _empireMesh._indices.size(), 1, 0, 0);
@@ -1096,6 +1193,8 @@ bool VulkanEngine::upload_mesh(const std::vector<Vertex>& vertices, const std::v
 
 	return true;
 }
+
+
 
 void VulkanEngine::init_uniform_buffers()
 {

@@ -2,9 +2,10 @@
 
 layout (location = 0) in vec3 vPosition;
 layout (location = 1) in vec3 vNormal;
+layout (location = 2) in vec2 vUV;
 
 layout (location = 0) out vec3 outColor;
-
+layout (location = 1) out vec2 outUV;
 layout( push_constant ) uniform constants
 {
 layout(offset = 0) mat4 data;
@@ -23,9 +24,11 @@ layout(set = 1, binding = 0) uniform ObjectUniforms {
 
 void main() 
 {
+	
 	mat4 model = world.cameraMatrix* ubo.modelMatrix;//PushConstants.data;
 	gl_Position = model * vec4(vPosition, 1.0f);	
 
+	outUV = vUV;
 	outColor = vNormal;
 }
 

@@ -15,9 +15,11 @@ layout(set = 1, binding = 0) uniform ObjectUniforms {
 	vec4 shineColor;
 } ubo;
 
+layout(set = 2, binding = 0) uniform sampler2D tex1;
 
 void main() 
 {
-	outFragColor = vec4(inColor,1.0f);
+	vec3 color = texture(tex1,inUV).xyz;
+	outFragColor = vec4(color,1.0f);
 }
 

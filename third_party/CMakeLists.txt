@@ -4,6 +4,9 @@ add_library(volk STATIC)
 add_library(vkbootstrap STATIC)
 add_library(glm INTERFACE)
 add_library(vma INTERFACE)
+
+add_library(stb_image INTERFACE)
+
 add_library(tinyobjloader STATIC)
 
 target_sources(volk PRIVATE 
@@ -57,3 +60,6 @@ target_sources(imgui PRIVATE
 )
 
 target_link_libraries(imgui PUBLIC Vulkan::Vulkan sdl2)
+
+
+target_include_directories(stb_image INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/stb_image" )

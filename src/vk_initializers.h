@@ -47,6 +47,8 @@ namespace vkinit {
 
 	VkWriteDescriptorSet descriptor_write_buffer(VkDescriptorSet dstSet, uint32_t dstBinding , VkDescriptorBufferInfo * pBufferInfo, VkDescriptorType type);
 
+	VkWriteDescriptorSet descriptor_write_image(VkDescriptorSet dstSet, uint32_t dstBinding, VkDescriptorImageInfo* pImageInfo, VkDescriptorType type);
+
 	template<typename T>
 	VkDescriptorBufferInfo descriptor_buffer_info(const AllocatedBuffer &buffer,VkDeviceSize  offset = 0) {
 

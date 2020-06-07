@@ -42,6 +42,7 @@ struct Vertex {
 
 	glm::vec3 position;
 	glm::vec3 normal;
+	glm::vec2 uv;
 
 	static VertexInputDescription getVertexInputState() {
 		VertexInputDescription description;
@@ -65,8 +66,15 @@ struct Vertex {
 		normalAttribute.format = VK_FORMAT_R32G32B32_SFLOAT;
 		normalAttribute.offset = offsetof(Vertex, normal);
 
+		VkVertexInputAttributeDescription uvAttribute = {};
+		uvAttribute.binding = 0;
+		uvAttribute.location = 2;
+		uvAttribute.format = VK_FORMAT_R32G32_SFLOAT;
+		uvAttribute.offset = offsetof(Vertex, uv);
+
 		description.attributes.push_back(positionAttribute);
 		description.attributes.push_back(normalAttribute);
+		description.attributes.push_back(uvAttribute);
 
 		return description;
 	}

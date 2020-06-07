@@ -54,9 +54,12 @@ public:
 	VkSemaphore _presentSemaphore, _renderSemaphore;
 	VkFence _renderFence;
 
+
 	VkQueue _graphicsQueue;
 	VkCommandPool _commandPool;
-	VkCommandBuffer _mainCommandBuffer;
+	VkCommandBuffer _frameCommandBuffer;
+
+	VkCommandBuffer _immediateCommandBuffer;
 
 	VkSurfaceKHR _surface;
 	VkRenderPass _renderPass;
@@ -71,19 +74,25 @@ public:
 	VkPipeline _trianglePipeline;
 	VkPipeline _funkTrianglePipeline;
 	VkPipeline _meshPipeline;
+	VkPipeline _texturedMeshPipeline;
 
 	VkPipelineLayout _trianglePipelineLayout;
 	VkPipelineLayout _meshPipelineLayout;
 
+	VkPipelineLayout _texturedMeshPipelineLayout;
+
 	VkDescriptorSetLayout _singleUniformSetLayout;
 	VkDescriptorSetLayout _singleUniformDynamicSetLayout;
+	VkDescriptorSetLayout _singleTextureLayout;
 
 	VkDescriptorPool _frameDescriptorPool;
 
 	Mesh _monkeyMesh;
 	Mesh _empireMesh;
 
-
+	AllocatedImage _empireTexture;
+	VkImageView _empireTexImageView;
+	VkSampler _empireTexSampler;
 	//holds uniform data for world parameters
 	AllocatedBuffer _worldParameterBuffer;
 
@@ -117,6 +126,8 @@ public:
 
 	bool upload_mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, Mesh& outMesh);
 
+	void execute_immediate_command(std::function<void(VkCommandBuffer)> function);
+
 private:
 	
 	void init_uniform_buffers();
@@ -134,4 +145,6 @@ private:
 	void init_pipelines();
 
 	void init_depth_image(VkFormat selectedDepthFormat);
+
+	void init_texture_resources();
 };

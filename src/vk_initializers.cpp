@@ -280,3 +280,18 @@ VkWriteDescriptorSet vkinit::descriptor_write_buffer(VkDescriptorSet dstSet, uin
 
 	return setWrite;
 }
+
+VkWriteDescriptorSet vkinit::descriptor_write_image(VkDescriptorSet dstSet, uint32_t dstBinding, VkDescriptorImageInfo* pImageInfo, VkDescriptorType type)
+{
+	VkWriteDescriptorSet setWrite = {};
+	setWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	setWrite.pNext = nullptr;
+
+	setWrite.dstBinding = dstBinding;
+	setWrite.dstSet = dstSet;
+	setWrite.descriptorCount = 1;
+	setWrite.descriptorType = type;
+	setWrite.pImageInfo = pImageInfo;
+
+	return setWrite;
+}

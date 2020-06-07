@@ -6,6 +6,8 @@ add_executable (vulkan_guide
  "vk_engine.h" 
  "vk_mesh.cpp" 
  "vk_mesh.h" 
+  "vk_textures.cpp" 
+ "vk_textures.h" 
  "vk_types.h" 
  "vk_initializers.cpp" 
  "vk_initializers.h")
@@ -15,6 +17,6 @@ set_property(TARGET vulkan_guide PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "$<TARGE
 
 target_include_directories(vulkan_guide PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 
-target_link_libraries(vulkan_guide  vkbootstrap vma glm tinyobjloader imgui)
+target_link_libraries(vulkan_guide  vkbootstrap vma glm tinyobjloader imgui stb_image)
 
 target_link_libraries(vulkan_guide Vulkan::Vulkan sdl2)

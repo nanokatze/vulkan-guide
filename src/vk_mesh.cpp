@@ -51,6 +51,9 @@ bool vkutil::load_mesh_from_obj(const std::string& filename, std::vector<Vertex>
 				new_vert.normal.y = ny;
 				new_vert.normal.z = nz;
 
+				new_vert.uv.x = tx;
+				new_vert.uv.y = 1-ty;
+
 				outIndices.push_back(outVertices.size());
 				outVertices.push_back(new_vert);
 			}
