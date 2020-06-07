@@ -868,13 +868,15 @@ void VulkanEngine::init_pipelines()
 
 	VK_CHECK(vkCreateDescriptorSetLayout(_device, &layoutCreateInfo, nullptr, &_singleUniformSetLayout));
 
+	//change type to create dynamic uniform buffer
 	binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
 	VK_CHECK(vkCreateDescriptorSetLayout(_device, &layoutCreateInfo, nullptr, &_singleUniformDynamicSetLayout));
 
+	//change type to create a image sampler 
 	binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 	VK_CHECK(vkCreateDescriptorSetLayout(_device, &layoutCreateInfo, nullptr, &_singleTextureLayout));
 
-	//because the layout is the same on the 2 sets (single uniform buffer), we can use the same set-layout for both sets
+	
 	VkDescriptorSetLayout layouts[3] = { _singleUniformSetLayout ,_singleUniformDynamicSetLayout,_singleTextureLayout };
 	pipeline_layout_info.pSetLayouts = layouts;
 	pipeline_layout_info.setLayoutCount = 2;
@@ -884,9 +886,11 @@ void VulkanEngine::init_pipelines()
 	push_constant.stageFlags = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
 
-	//create the pipeline layout with a mat4 pushconstant on vertex shader and the 2 descriptor sets
+	//create the pipeline layout with a mat4 pushconstant on vertex shader and the 2 first descriptor sets
+	pipeline_layout_info.setLayoutCount = 2;
 	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_meshPipelineLayout));
 
+	//create the textured layout that also uses the texture set
 	pipeline_layout_info.setLayoutCount = 3;
 	VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_texturedMeshPipelineLayout));
 
@@ -906,12 +910,15 @@ void VulkanEngine::init_pipelines()
 		vkDestroyPipeline(_device, _trianglePipeline, nullptr);
 		vkDestroyPipeline(_device, _funkTrianglePipeline, nullptr);
 		vkDestroyPipeline(_device, _meshPipeline, nullptr);
+		vkDestroyPipeline(_device, _texturedMeshPipeline, nullptr);
 
 		vkDestroyPipelineLayout(_device, _trianglePipelineLayout, nullptr);
 		vkDestroyPipelineLayout(_device, _meshPipelineLayout, nullptr);
+		vkDestroyPipelineLayout(_device, _texturedMeshPipelineLayout, nullptr);
 
 		vkDestroyDescriptorSetLayout(_device, _singleUniformSetLayout, nullptr);
 		vkDestroyDescriptorSetLayout(_device, _singleUniformDynamicSetLayout, nullptr);
+		vkDestroyDescriptorSetLayout(_device, _singleTextureLayout, nullptr);
 	});
 }
 
@@ -947,7 +954,7 @@ void VulkanEngine::init_depth_image(VkFormat selectedDepthFormat)
 
 void VulkanEngine::init_texture_resources()
 {
-	vkutil::load_texture_from_file(*this, "../../assets/lost_empire-RGBA.png", _meshTexture._image);
+	vkutil::load_image_from_file(*this, "../../assets/lost_empire-RGBA.png", _meshTexture._image);
 
 	//build a image-view for the depth image to use for rendering
 	VkImageViewCreateInfo viewInfo = vkinit::image_view_create_info(VK_FORMAT_R8G8B8A8_UNORM,_meshTexture._image._image);
@@ -975,7 +982,9 @@ void VulkanEngine::draw() {
 	//now that we are sure that the commands finished executing, we can safely reset the command buffer to begin recording again.
 	VK_CHECK(vkResetCommandBuffer(_frameCommandBuffer, 0));
 	
+	//also reset the descriptor pool as we reallocate descriptors at render-time
 	VK_CHECK(vkResetDescriptorPool(_device, _frameDescriptorPool, 0));
+
 	//request image from the swapchain
 	uint32_t swapchainImageIndex;
 	VK_CHECK( vkAcquireNextImageKHR(_device, _swapchain, 0, _presentSemaphore, nullptr , &swapchainImageIndex));	
@@ -1007,11 +1016,12 @@ void VulkanEngine::draw() {
 
 	//once we start adding rendering commands, they will go here
 
-	//make a model view matrix for rendering the object
-		//camera view
+	//build camera matrix
+	//camera view
 	glm::mat4 view = glm::translate(glm::mat4(1.f), camPos);
 	//camera projection
 	glm::mat4 projection = glm::perspective(glm::radians(70.f), 1700.f / 900.f, 0.1f, 200.0f);
+	//flip Y couse vulkan
 	projection[1][1] *= -1;
 	VkDescriptorSet worldSet;
 	{
@@ -1065,8 +1075,6 @@ void VulkanEngine::draw() {
 			dataArray[i].modelMatrix = mesh_matrix;
 		}
 		vmaUnmapMemory(_allocator, _objectDataBuffer._allocation);
-
-
 
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipeline);
 

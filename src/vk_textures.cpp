@@ -8,7 +8,7 @@
 
 
 
-bool vkutil::load_texture_from_file(VulkanEngine& engine, const std::string& file, AllocatedImage & outImage)
+bool vkutil::load_image_from_file(VulkanEngine& engine, const std::string& file, AllocatedImage & outImage)
 {
 	int texWidth, texHeight, texChannels;
 
@@ -47,8 +47,7 @@ bool vkutil::load_texture_from_file(VulkanEngine& engine, const std::string& fil
 	
 	//transition image to transfer-receiver
 	
-	engine.execute_immediate_command([&](VkCommandBuffer cmd) {
-		
+	engine.execute_immediate_command([&](VkCommandBuffer cmd) {		
 		
 		VkImageSubresourceRange range;
 		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
