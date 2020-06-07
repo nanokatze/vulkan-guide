@@ -563,6 +563,13 @@ void VulkanEngine::init()
    
 	upload_mesh(vertices, indices,_monkeyMesh);  
 
+	vertices.clear();
+	indices.clear();
+
+	vkutil::load_mesh_from_obj("../../assets/lost_empire.obj", vertices, indices);
+
+	upload_mesh(vertices, indices, _empireMesh);
+
 	init_imgui();
 
 	init_uniform_buffers();
@@ -940,6 +947,12 @@ void VulkanEngine::draw() {
 		void* dataPtr;
 		vmaMapMemory(_allocator, _objectDataBuffer._allocation, &dataPtr);
 		ObjectUniforms* dataArray = static_cast<ObjectUniforms*>(dataPtr);
+
+
+		dataArray->modelMatrix = glm::mat4{ 1.f };
+
+		dataArray++;
+
 		for (int i = 0; i < _numMonkeys; i++)
 		{
 			//model rotation
@@ -968,10 +981,7 @@ void VulkanEngine::draw() {
 
 		vkUpdateDescriptorSets(_device, 1, &objectDSwrite, 0, nullptr);
 
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 0, 1, &worldSet, 0, nullptr);
-		
-		
-		
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 0, 1, &worldSet, 0, nullptr);		
 		
 		for (int i = 0; i < _numMonkeys; i++)
 		{
@@ -981,7 +991,16 @@ void VulkanEngine::draw() {
 
 			//we can now draw
 			vkCmdDraw(cmd, _monkeyMesh._indices.size(), 1, 0, 0);
-		}		
+		}
+
+		_empireMesh.bind_vertex_buffer(cmd);
+
+		//draw the big mesh
+		uint32_t dynamicOffset = 0;
+		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipelineLayout, 1, 1, &objectSet, 1, &dynamicOffset);
+
+		//we can now draw
+		vkCmdDraw(cmd, _empireMesh._indices.size(), 1, 0, 0);
 	}
 	
 
@@ -1049,7 +1068,7 @@ bool VulkanEngine::upload_mesh(const std::vector<Vertex>& vertices, const std::v
 	//allocate vertex buffer
 	VkBufferCreateInfo bufferInfo = {};
 	bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-	bufferInfo.size = _monkeyMesh._vertices.size() * sizeof(Vertex);
+	bufferInfo.size = vertices.size() * sizeof(Vertex);
 	bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
 	bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
@@ -1071,7 +1090,7 @@ bool VulkanEngine::upload_mesh(const std::vector<Vertex>& vertices, const std::v
 	void* data;
 	vmaMapMemory(_allocator, outMesh._vertexBuffer._allocation, &data);
 
-	memcpy(data, _monkeyMesh._vertices.data(), _monkeyMesh._vertices.size() * sizeof(Vertex));
+	memcpy(data, vertices.data(), vertices.size() * sizeof(Vertex));
 
 	vmaUnmapMemory(_allocator, outMesh._vertexBuffer._allocation);
 

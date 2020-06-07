@@ -81,6 +81,8 @@ public:
 	VkDescriptorPool _frameDescriptorPool;
 
 	Mesh _monkeyMesh;
+	Mesh _empireMesh;
+
 
 	//holds uniform data for world parameters
 	AllocatedBuffer _worldParameterBuffer;
