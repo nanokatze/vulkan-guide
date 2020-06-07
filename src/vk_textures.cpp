@@ -23,27 +23,15 @@ bool vkutil::load_texture_from_file(VulkanEngine& engine, const std::string& fil
 		std::cout << "Failed to load texture file " << file << std::endl;
 		return false;
 	}
-
-	VkBufferCreateInfo stagingBufferInfo = {};
-	stagingBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-	stagingBufferInfo.size = imageSize;
-	stagingBufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-	stagingBufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-	VmaAllocationCreateInfo vmaallocInfo = {};
-	vmaallocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-	vmaallocInfo.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
-
-	VmaAllocation stagingAllocation;
-	VkBuffer stagingBuffer;
-	VK_CHECK(vmaCreateBuffer(engine._allocator, &stagingBufferInfo, &vmaallocInfo, &stagingBuffer, &stagingAllocation, nullptr));
+	
+	AllocatedBuffer stagingBuffer = engine.allocate_buffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
 
 	void* data;
-	vmaMapMemory(engine._allocator, stagingAllocation, &data);
+	vmaMapMemory(engine._allocator, stagingBuffer._allocation, &data);
 
 	memcpy(data, pixel_ptr, static_cast<size_t>(imageSize));
 
-	vmaUnmapMemory(engine._allocator, stagingAllocation);
+	vmaUnmapMemory(engine._allocator, stagingBuffer._allocation);
 
 	stbi_image_free(pixels);
 
@@ -55,16 +43,8 @@ bool vkutil::load_texture_from_file(VulkanEngine& engine, const std::string& fil
 	//the depth image will be a image with the format we selected and Depth Attachment usage flag
 	VkImageCreateInfo dimg_info = vkinit::image_create_info(image_format, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, imageExtent);
 
-	//for the depth image, we want to allocate it from gpu local memory
-	VmaAllocationCreateInfo dimg_allocinfo = {};
-	dimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-	dimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-	AllocatedImage newImage;
-
-	//allocate and create the image
-	vmaCreateImage(engine._allocator, &dimg_info, &dimg_allocinfo, &newImage._image, &newImage._allocation, nullptr);
-
+	AllocatedImage newImage = engine.allocate_image(dimg_info, VMA_MEMORY_USAGE_GPU_ONLY);
+	
 	//transition image to transfer-receiver
 	
 	engine.execute_immediate_command([&](VkCommandBuffer cmd) {
@@ -106,7 +86,7 @@ bool vkutil::load_texture_from_file(VulkanEngine& engine, const std::string& fil
 		copyRegion.imageExtent = imageExtent;
 
 		//copy the buffer into the image
-		vkCmdCopyBufferToImage(cmd, stagingBuffer, newImage._image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+		vkCmdCopyBufferToImage(cmd, stagingBuffer._buffer, newImage._image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
 
 		VkImageMemoryBarrier imageBarrier_toReadable = imageBarrier_toTransfer;
 
@@ -120,7 +100,7 @@ bool vkutil::load_texture_from_file(VulkanEngine& engine, const std::string& fil
 		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &imageBarrier_toReadable);
 	});
 
-	vmaDestroyBuffer(engine._allocator, stagingBuffer, stagingAllocation);
+	engine.deallocate_buffer(&stagingBuffer);
 
 	std::cout << "Texture loaded succesfully " << file << std::endl;
 

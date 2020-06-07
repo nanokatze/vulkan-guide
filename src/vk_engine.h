@@ -90,9 +90,8 @@ public:
 	Mesh _monkeyMesh;
 	Mesh _empireMesh;
 
-	AllocatedImage _empireTexture;
-	VkImageView _empireTexImageView;
-	VkSampler _empireTexSampler;
+	Texture _meshTexture;
+	
 	//holds uniform data for world parameters
 	AllocatedBuffer _worldParameterBuffer;
 
@@ -127,6 +126,11 @@ public:
 	bool upload_mesh(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, Mesh& outMesh);
 
 	void execute_immediate_command(std::function<void(VkCommandBuffer)> function);
+
+	AllocatedBuffer allocate_buffer(VkDeviceSize bufferSize, VkBufferUsageFlags bufferUsageFlags, VmaMemoryUsage memoryUsageFlags);
+	AllocatedImage allocate_image(const VkImageCreateInfo& createInfo, VmaMemoryUsage memoryUsageFlags);
+	void deallocate_image(AllocatedImage* image);
+	void deallocate_buffer(AllocatedBuffer* buffer);
 
 private:
 	

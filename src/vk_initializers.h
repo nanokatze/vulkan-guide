@@ -49,6 +49,10 @@ namespace vkinit {
 
 	VkWriteDescriptorSet descriptor_write_image(VkDescriptorSet dstSet, uint32_t dstBinding, VkDescriptorImageInfo* pImageInfo, VkDescriptorType type);
 
+	VkImageViewCreateInfo image_view_create_info(VkFormat format, VkImage image, VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT);
+
+	VkSamplerCreateInfo sampler_create_info(VkFilter filters, VkSamplerAddressMode samplerAdressMode = VK_SAMPLER_ADDRESS_MODE_REPEAT);
+
 	template<typename T>
 	VkDescriptorBufferInfo descriptor_buffer_info(const AllocatedBuffer &buffer,VkDeviceSize  offset = 0) {
 

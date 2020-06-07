@@ -746,6 +746,46 @@ void VulkanEngine::execute_immediate_command(std::function<void(VkCommandBuffer)
 	VK_CHECK(vkResetCommandBuffer(_immediateCommandBuffer, 0));
 }
 
+AllocatedBuffer VulkanEngine::allocate_buffer(VkDeviceSize bufferSize, VkBufferUsageFlags bufferUsageFlags, VmaMemoryUsage memoryUsageFlags)
+{
+	VkBufferCreateInfo stagingBufferInfo = {};
+	stagingBufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	stagingBufferInfo.size = bufferSize;
+	stagingBufferInfo.usage = bufferUsageFlags;
+
+	VmaAllocationCreateInfo vmaallocInfo = {};
+	vmaallocInfo.usage = memoryUsageFlags;
+
+	AllocatedBuffer newBuffer;
+	VK_CHECK(vmaCreateBuffer(_allocator, &stagingBufferInfo, &vmaallocInfo, &newBuffer._buffer, &newBuffer._allocation, nullptr));
+
+	return newBuffer;
+}
+
+AllocatedImage VulkanEngine::allocate_image(const VkImageCreateInfo& createInfo, VmaMemoryUsage memoryUsageFlags)
+{
+	//for the depth image, we want to allocate it from gpu local memory
+	VmaAllocationCreateInfo dimg_allocinfo = {};
+	dimg_allocinfo.usage = memoryUsageFlags;
+
+	AllocatedImage newImage;
+
+	//allocate and create the image
+	vmaCreateImage(_allocator, &createInfo, &dimg_allocinfo, &newImage._image, &newImage._allocation, nullptr);
+
+	return newImage;
+}
+
+void VulkanEngine::deallocate_image(AllocatedImage* image)
+{
+	vmaDestroyImage(_allocator, image->_image, image->_allocation);
+}
+
+void VulkanEngine::deallocate_buffer(AllocatedBuffer* buffer)
+{
+	vmaDestroyBuffer(_allocator, buffer->_buffer, buffer->_allocation);
+}
+
 void VulkanEngine::init_framebuffers(int swapchain_imagecount)
 {
 	//create the framebuffers for the swapchain images. This will connect the render-pass to the images for rendering
@@ -895,17 +935,8 @@ void VulkanEngine::init_depth_image(VkFormat selectedDepthFormat)
 	vmaCreateImage(_allocator, &dimg_info, &dimg_allocinfo, &_depthImage._image, &_depthImage._allocation, nullptr);
 
 	//build a image-view for the depth image to use for rendering
-	VkImageViewCreateInfo dview_info = {};
-	dview_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	dview_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	dview_info.image = _depthImage._image;
-	dview_info.format = selectedDepthFormat;
-	dview_info.subresourceRange.baseMipLevel = 0;
-	dview_info.subresourceRange.levelCount = 1;
-	dview_info.subresourceRange.baseArrayLayer = 0;
-	dview_info.subresourceRange.layerCount = 1;
-	dview_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
-
+	VkImageViewCreateInfo dview_info = vkinit::image_view_create_info(selectedDepthFormat,_depthImage._image, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+	
 	VK_CHECK(vkCreateImageView(_device, &dview_info, nullptr, &_depthImageView));
 
 	_mainDeletionQueue.push_function([=]() {
@@ -916,31 +947,23 @@ void VulkanEngine::init_depth_image(VkFormat selectedDepthFormat)
 
 void VulkanEngine::init_texture_resources()
 {
-	vkutil::load_texture_from_file(*this, "../../assets/lost_empire-RGBA.png", _empireTexture);
+	vkutil::load_texture_from_file(*this, "../../assets/lost_empire-RGBA.png", _meshTexture._image);
 
 	//build a image-view for the depth image to use for rendering
-	VkImageViewCreateInfo dview_info = {};
-	dview_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	dview_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	dview_info.image = _empireTexture._image;
-	dview_info.format = VK_FORMAT_R8G8B8A8_UNORM;
-	dview_info.subresourceRange.baseMipLevel = 0;
-	dview_info.subresourceRange.levelCount = 1;
-	dview_info.subresourceRange.baseArrayLayer = 0;
-	dview_info.subresourceRange.layerCount = 1;
-	dview_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	VkImageViewCreateInfo viewInfo = vkinit::image_view_create_info(VK_FORMAT_R8G8B8A8_UNORM,_meshTexture._image._image);
+	
+	VK_CHECK(vkCreateImageView(_device, &viewInfo, nullptr, &_meshTexture._imageView));
 
-	VK_CHECK(vkCreateImageView(_device, &dview_info, nullptr, &_empireTexImageView));
+	//create the sampler for that texture
+	VkSamplerCreateInfo samplerInfo = vkinit::sampler_create_info(VK_FILTER_NEAREST);
+	
+	VK_CHECK(vkCreateSampler(_device, &samplerInfo, nullptr, &_meshTexture._sampler));
 
-	VkSamplerCreateInfo samplerInfo = {};
-	samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-	samplerInfo.magFilter = VK_FILTER_LINEAR;
-	samplerInfo.minFilter = VK_FILTER_LINEAR;
-	samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-	samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-	samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-
-	VK_CHECK(vkCreateSampler(_device, &samplerInfo, nullptr, &_empireTexSampler));
+	_mainDeletionQueue.push_function([=]() {
+		vmaDestroyImage(_allocator, _meshTexture._image._image, _meshTexture._image._allocation);
+		vkDestroySampler(_device, _meshTexture._sampler, nullptr);
+		vkDestroyImageView(_device, _meshTexture._imageView, nullptr);
+	});
 }
 
 void VulkanEngine::draw() {	
@@ -1081,8 +1104,8 @@ void VulkanEngine::draw() {
 		VK_CHECK(vkAllocateDescriptorSets(_device, &allocInfo, &imageSet));
 
 		VkDescriptorImageInfo descriptorImageInfo = {};
-		descriptorImageInfo.sampler = _empireTexSampler;
-		descriptorImageInfo.imageView =_empireTexImageView;
+		descriptorImageInfo.sampler = _meshTexture._sampler;
+		descriptorImageInfo.imageView =_meshTexture._imageView;
 		descriptorImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 		VkWriteDescriptorSet imageDsWrite = vkinit::descriptor_write_image(imageSet, 0, &descriptorImageInfo, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);

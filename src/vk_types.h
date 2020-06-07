@@ -31,6 +31,12 @@ struct AllocatedImage {
 	VmaAllocation _allocation;
 };
 
+struct Texture {
+	AllocatedImage _image;
+	VkImageView _imageView;
+	VkSampler _sampler;
+};
+
 struct VertexInputDescription {
 	std::vector<VkVertexInputBindingDescription> bindings;
 	std::vector<VkVertexInputAttributeDescription> attributes;
