@@ -1,0 +1,15 @@
+[package]
+name = "vulkan-guide"
+version = "0.0.0"
+authors = []
+edition = "2018"
+
+[dependencies]
+ash = "0.31"
+ash-window = "0.5"
+image = "0.10"
+winit = "0.19.4"
+
+[[bin]]
+name = "ch0"
+path = "ch0/main.rs"
