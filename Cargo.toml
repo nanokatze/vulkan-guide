@@ -13,3 +13,7 @@ winit = "0.19.4"
 [[bin]]
 name = "ch0"
 path = "ch0/main.rs"
+
+[[bin]]
+name = "ch1"
+path = "ch1/main.rs"
