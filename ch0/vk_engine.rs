@@ -1,3 +1,5 @@
+use ash::vk;
+
 struct VulkanEngineInner {
 }
 
@@ -18,14 +20,14 @@ impl Drop for VulkanEngineInner {
 pub struct VulkanEngine {
     events_loop: winit::EventsLoop,
     window: winit::Window,
-    window_extent: ash::vk::Extent2D,
+    window_extent: vk::Extent2D,
     inner: VulkanEngineInner,
 }
 
 impl VulkanEngine {
     pub fn new() -> VulkanEngine {
         let events_loop = winit::EventsLoop::new();
-        let window_extent = ash::vk::Extent2D{width: 1700, height: 900};
+        let window_extent = vk::Extent2D{width: 1700, height: 900};
         let window = winit::WindowBuilder::new()
             .with_title("VulkanEngine")
             .with_dimensions(winit::dpi::LogicalSize::new(
@@ -58,5 +60,10 @@ impl VulkanEngine {
             inner.draw();
             cf
         });
+    }
+}
+
+impl Drop for VulkanEngine {
+    fn drop(&mut self) {
     }
 }
