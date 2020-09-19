@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 struct VulkanEngineInner {
 }
 
@@ -18,10 +16,10 @@ impl Drop for VulkanEngineInner {
 }
 
 pub struct VulkanEngine {
-    events_loop: RefCell<winit::EventsLoop>,
+    events_loop: winit::EventsLoop,
     window: winit::Window,
     window_extent: ash::vk::Extent2D,
-    inner: RefCell<VulkanEngineInner>,
+    inner: VulkanEngineInner,
 }
 
 impl VulkanEngine {
@@ -37,19 +35,19 @@ impl VulkanEngine {
             .build(&events_loop)
             .unwrap();
         VulkanEngine{
-            events_loop: RefCell::new(events_loop),
+            events_loop: events_loop,
             window_extent,
             window,
-            inner: RefCell::new(VulkanEngineInner::new()),
+            inner: VulkanEngineInner::new(),
         }
     }
 
     pub fn run(&mut self) {
         use winit::*;
 
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = &mut self.inner;
 
-        self.events_loop.borrow_mut().run_forever(|event| {
+        self.events_loop.run_forever(|event| {
             let cf = match event {
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => winit::ControlFlow::Break,
